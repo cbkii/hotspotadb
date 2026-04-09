@@ -4,7 +4,7 @@
 
 Xposed module that allows Wireless Debugging (ADB over Wi-Fi) to work over Wi-Fi Hotspot on Android 15.
 
-Android 11+ only enables Wireless Debugging when the device is connected to a Wi-Fi network as a client. This module hooks the Settings app and system framework to bypass that restriction, so hotspot guests can connect via ADB.
+Android 11+ only enables Wireless Debugging when the device is connected to Wi-Fi as a client. This module hooks the Settings app and system framework to bypass that restriction, so hotspot guests can connect via ADB.
 
 ## Requirements
 
@@ -25,13 +25,8 @@ Grab the latest APK from [GitHub Actions](https://github.com/droserasprout/xpose
 
 1. Enable Wi-Fi Hotspot
 2. Use the Wireless Debugging toggle on the hotspot settings screen, or go to Developer Options > Wireless Debugging
-3. Pair your client device
-4. From a hotspot guest:
-
-```shell
-adb pair <ip>:<pairing_port> <pairing_code>
-adb connect <ip>:<port>
-```
+3. Pair your client device: `adb pair <ip>:<pairing_port> <pairing_code>`
+4. Connect: `adb connect <ip>:<port>`
 
 On first use, Android prompts to trust a network matching your hotspot name. Renaming the hotspot will reset this trust. The MAC address is hardcoded because Android randomizes the hotspot MAC on each enable, which would reset trust every time.
 
