@@ -22,20 +22,23 @@ object HotspotHelper {
         }
     }
 
-    fun getHotspotIpAddress(): String? {
+    fun getIpAddresses(): List<String> {
+        val result = mutableListOf<String>()
         try {
-            val interfaces = NetworkInterface.getNetworkInterfaces() ?: return null
+            val interfaces = NetworkInterface.getNetworkInterfaces() ?: return result
             for (iface in interfaces) {
                 if (iface.isLoopback || !iface.isUp) continue
                 for (addr in iface.inetAddresses) {
                     if (addr is Inet4Address && !addr.isLoopbackAddress) {
-                        return addr.hostAddress
+                        addr.hostAddress?.let { result.add(it) }
                     }
                 }
             }
         } catch (e: Exception) {
-            XposedBridge.log("HotspotAdb: failed to get hotspot IP: $e")
+            XposedBridge.log("HotspotAdb: failed to get IP addresses: $e")
         }
-        return null
+        return result
     }
+
+    fun getHotspotIpAddress(): String? = getIpAddresses().firstOrNull()
 }

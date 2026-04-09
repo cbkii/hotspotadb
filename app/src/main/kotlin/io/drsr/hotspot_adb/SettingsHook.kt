@@ -141,9 +141,9 @@ object SettingsHook {
             arrayOf(clickListenerClass)
         ) { _, _, _ ->
             try {
-                val intent = android.content.Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS).apply {
-                    putExtra(":settings:fragment_args_key", "toggle_adb_wireless")
-                }
+                val subSettingsClass = XposedHelpers.findClass("com.android.settings.SubSettings", context.classLoader)
+                val intent = android.content.Intent(context, subSettingsClass)
+                intent.putExtra(":settings:show_fragment", "com.android.settings.development.WirelessDebuggingFragment")
                 context.startActivity(intent)
             } catch (e: Exception) {
                 XposedBridge.log("HotspotAdb: failed to open wireless debugging: $e")
@@ -175,10 +175,15 @@ object SettingsHook {
         return Settings.Global.getInt(context.contentResolver, ADB_WIFI_ENABLED, 0) == 1
     }
 
+    @Suppress("UNUSED_PARAMETER")
     private fun getWirelessDebuggingSummary(context: Context, enabled: Boolean): String {
         if (!enabled) return ""
-        val ip = HotspotHelper.getHotspotIpAddress() ?: return ""
-        val port = Settings.Global.getInt(context.contentResolver, "adb_wifi_enabled_port", -1)
-        return if (port > 0) "$ip:$port" else ip
+        val ips = HotspotHelper.getIpAddresses()
+        if (ips.isEmpty()) return ""
+        val port = try {
+            val adbManager = context.getSystemService("adb")
+            XposedHelpers.callMethod(adbManager, "getAdbWirelessPort") as Int
+        } catch (_: Throwable) { -1 }
+        return ips.joinToString(", ") { ip -> if (port > 0) "$ip:$port" else ip }
     }
 }
