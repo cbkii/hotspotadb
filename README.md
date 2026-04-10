@@ -44,6 +44,6 @@ make clean     # clean build artifacts
 
 [Magisk-WiFiADB](https://github.com/mrh929/magisk-wifiadb) — Magisk module, enables legacy `adb tcpip` on boot. Simpler (just Magisk, any Android), but unencrypted and not hotspot-aware. This module hooks native Wireless Debugging (TLS, pairing) with Settings UI, but needs LSPosed and Android 15.
 
-# License
+## License
 
 [GPL-3.0](LICENSE)
