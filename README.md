@@ -1,20 +1,25 @@
-<img src="screenshot.png" align="right" width="300">
+<img src="screenshot.png" align="right" width="220">
 
 # Hotspot Wireless Debugging
 
-Xposed module that allows Wireless Debugging (ADB over Wi-Fi) to work over Wi-Fi Hotspot on Android 15-16.
+Xposed module that allows Wireless Debugging (ADB over Wi-Fi) to work over Wi-Fi Hotspot on Android 15/16.
 
 Android 11+ only enables Wireless Debugging when the device is connected to Wi-Fi as a client. This module hooks the Settings app and system framework to bypass that restriction, so hotspot guests can connect via ADB.
 
-## Tested on
+## Requirements
 
-| Device | ROM | Zygisk | Xposed | Notes |
+- Android 15/16
+- Magisk or other Zygisk implementation
+- LSPosed/Vector
+
+### Tested configurations
+
+| Device | Android | ROM | Zygisk | Xposed |
 | --- | --- | --- | --- | -- |
-| enchilada | LineageOS 22.2 (Android 15) | Magisk 30.7 | LSPosed 1.9.2, Vector 2.0 | |
-| tucana | LineageOS 23.2 (Android 16) | Magisk 30.7 | Vector 2.0 | |
+| enchilada | 15 | LineageOS 22.2 | Magisk 30.7 | LSPosed 1.9.2 </br> Vector 2.0 |
+| tucana | 16 | LineageOS 23.2 | Magisk 30.7 | Vector 2.0 |
 
-- Android 15 (older versions not tested)
-- LSPosed or compatible Xposed framework
+If this module works (or not) on your device/ROM, please [open an issue](https://github.com/droserasprout/io.drsr.hotspotadb/issues) with details!
 
 ## Installation
 
