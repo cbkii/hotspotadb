@@ -353,13 +353,15 @@ object SettingsHook {
             if (observer != null) {
                 try {
                     context.contentResolver.unregisterContentObserver(observer)
-                } catch (_: Exception) {
+                } catch (e: Exception) {
+                    Log.d(TAG, "$TAG: unregisterContentObserver failed: $e")
                 }
             }
             if (receiver != null) {
                 try {
                     context.unregisterReceiver(receiver)
-                } catch (_: Exception) {
+                } catch (e: Exception) {
+                    Log.d(TAG, "$TAG: unregisterReceiver failed: $e")
                 }
             }
         }
