@@ -11,14 +11,14 @@ detekt {
 
 android {
     namespace = "io.drsr.hotspotadb"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "io.drsr.hotspotadb"
         minSdk = 35
-        targetSdk = 35
-        versionCode = 2
-        versionName = "1.0.1"
+        targetSdk = 36
+        versionCode = 3
+        versionName = "1.0.2"
     }
 
     signingConfigs {

@@ -44,11 +44,19 @@ object FrameworkHook {
                                     "HotspotAP"
                                 }
 
+                            // Android 16+: top-level class; Android 15: inner class
                             val connectionInfoClass =
-                                XposedHelpers.findClass(
-                                    "com.android.server.adb.AdbDebuggingManager\$AdbConnectionInfo",
-                                    lpparam.classLoader,
-                                )
+                                try {
+                                    XposedHelpers.findClass(
+                                        "com.android.server.adb.AdbConnectionInfo",
+                                        lpparam.classLoader,
+                                    )
+                                } catch (_: XposedHelpers.ClassNotFoundError) {
+                                    XposedHelpers.findClass(
+                                        "com.android.server.adb.AdbDebuggingManager\$AdbConnectionInfo",
+                                        lpparam.classLoader,
+                                    )
+                                }
                             val info =
                                 XposedHelpers.newInstance(
                                     connectionInfoClass,
@@ -69,49 +77,71 @@ object FrameworkHook {
     }
 
     private fun hookBroadcastReceiver(lpparam: XC_LoadPackage.LoadPackageParam) {
-        // Scan anonymous inner classes of AdbDebuggingHandler to find the BroadcastReceiver
-        val baseName = "com.android.server.adb.AdbDebuggingManager\$AdbDebuggingHandler"
         var found = false
 
-        for (i in 1..10) {
-            try {
-                val cls = Class.forName("$baseName\$$i", false, lpparam.classLoader)
-                if (!BroadcastReceiver::class.java.isAssignableFrom(cls)) continue
-
-                XposedBridge.hookAllMethods(
-                    cls,
-                    "onReceive",
-                    object : XC_MethodHook() {
-                        override fun beforeHookedMethod(param: MethodHookParam) {
-                            val context = param.args[0] as Context
-                            val intent = param.args[1] as Intent
-                            val action = intent.action ?: return
-
-                            if (action == WifiManager.WIFI_STATE_CHANGED_ACTION ||
-                                action == WifiManager.NETWORK_STATE_CHANGED_ACTION
-                            ) {
-                                if (HotspotHelper.isHotspotActive(context)) {
-                                    param.result = null
-                                    XposedBridge.log("HotspotAdb: suppressed $action (hotspot active)")
-                                }
-                            }
-                        }
-                    },
+        // Android 16+: BroadcastReceiver extracted to a top-level class
+        try {
+            val cls =
+                XposedHelpers.findClass(
+                    "com.android.server.adb.AdbBroadcastReceiver",
+                    lpparam.classLoader,
                 )
-                found = true
-                XposedBridge.log("HotspotAdb: hooked BroadcastReceiver ${cls.name}")
-                break
-            } catch (_: ClassNotFoundException) {
-                continue
-            } catch (e: Exception) {
-                XposedBridge.log("HotspotAdb: error scanning inner class $i: $e")
+            hookBroadcastReceiverClass(cls)
+            found = true
+            XposedBridge.log("HotspotAdb: hooked BroadcastReceiver ${cls.name}")
+        } catch (_: XposedHelpers.ClassNotFoundError) {
+            // Not Android 16+, try legacy inner-class scan below
+        } catch (e: Exception) {
+            XposedBridge.log("HotspotAdb: error hooking AdbBroadcastReceiver: $e")
+        }
+
+        // Android 15: scan anonymous inner classes of AdbDebuggingHandler
+        if (!found) {
+            val baseName = "com.android.server.adb.AdbDebuggingManager\$AdbDebuggingHandler"
+            for (i in 1..10) {
+                try {
+                    val cls = Class.forName("$baseName\$$i", false, lpparam.classLoader)
+                    if (!BroadcastReceiver::class.java.isAssignableFrom(cls)) continue
+
+                    hookBroadcastReceiverClass(cls)
+                    found = true
+                    XposedBridge.log("HotspotAdb: hooked BroadcastReceiver ${cls.name}")
+                    break
+                } catch (_: ClassNotFoundException) {
+                    continue
+                } catch (e: Exception) {
+                    XposedBridge.log("HotspotAdb: error scanning inner class $i: $e")
+                }
             }
         }
 
         if (!found) {
-            XposedBridge.log("HotspotAdb: BroadcastReceiver inner class not found, falling back to ContentResolver hook")
+            XposedBridge.log("HotspotAdb: BroadcastReceiver not found, falling back to ContentResolver hook")
             hookSettingsGlobalDisable(lpparam)
         }
+    }
+
+    private fun hookBroadcastReceiverClass(cls: Class<*>) {
+        XposedBridge.hookAllMethods(
+            cls,
+            "onReceive",
+            object : XC_MethodHook() {
+                override fun beforeHookedMethod(param: MethodHookParam) {
+                    val context = param.args[0] as Context
+                    val intent = param.args[1] as Intent
+                    val action = intent.action ?: return
+
+                    if (action == WifiManager.WIFI_STATE_CHANGED_ACTION ||
+                        action == WifiManager.NETWORK_STATE_CHANGED_ACTION
+                    ) {
+                        if (HotspotHelper.isHotspotActive(context)) {
+                            param.result = null
+                            XposedBridge.log("HotspotAdb: suppressed $action (hotspot active)")
+                        }
+                    }
+                }
+            },
+        )
     }
 
     private fun hookSettingsGlobalDisable(lpparam: XC_LoadPackage.LoadPackageParam) {
@@ -131,9 +161,18 @@ object FrameworkHook {
                         if (key == "adb_wifi_enabled" && value == 0) {
                             try {
                                 val resolver = param.args[0] as android.content.ContentResolver
+                                // Android 15: getContext(); Android 16: mContext field
                                 val context =
-                                    resolver.javaClass.getMethod("getContext")
-                                        .invoke(resolver) as? Context
+                                    try {
+                                        resolver.javaClass.getMethod("getContext")
+                                            .invoke(resolver) as? Context
+                                    } catch (_: NoSuchMethodException) {
+                                        val field =
+                                            android.content.ContentResolver::class.java
+                                                .getDeclaredField("mContext")
+                                        field.isAccessible = true
+                                        field.get(resolver) as? Context
+                                    }
                                 if (context != null && HotspotHelper.isHotspotActive(context)) {
                                     param.result = false
                                     XposedBridge.log("HotspotAdb: blocked ADB_WIFI_ENABLED=0 (hotspot active)")

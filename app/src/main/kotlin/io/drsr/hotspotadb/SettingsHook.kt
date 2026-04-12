@@ -25,9 +25,19 @@ object SettingsHook {
     }
 
     private fun hookIsWifiConnected(lpparam: XC_LoadPackage.LoadPackageParam) {
+        // Android 16+: AdbWirelessDebuggingPreferenceController; Android 15: WirelessDebuggingPreferenceController
+        val controllerClass =
+            try {
+                XposedHelpers.findClass(
+                    "com.android.settings.development.AdbWirelessDebuggingPreferenceController",
+                    lpparam.classLoader,
+                ).name
+            } catch (_: XposedHelpers.ClassNotFoundError) {
+                "com.android.settings.development.WirelessDebuggingPreferenceController"
+            }
         try {
             XposedHelpers.findAndHookMethod(
-                "com.android.settings.development.WirelessDebuggingPreferenceController",
+                controllerClass,
                 lpparam.classLoader,
                 "isWifiConnected",
                 Context::class.java,
@@ -153,8 +163,17 @@ object SettingsHook {
             ) { _, _, _ ->
                 try {
                     val subSettingsClass = XposedHelpers.findClass("com.android.settings.SubSettings", context.classLoader)
+                    // Android 16+: AdbWirelessDebuggingFragment; Android 15: WirelessDebuggingFragment
+                    val fragmentClass =
+                        try {
+                            lpparam.classLoader.loadClass(
+                                "com.android.settings.development.AdbWirelessDebuggingFragment",
+                            ).name
+                        } catch (_: ClassNotFoundException) {
+                            "com.android.settings.development.WirelessDebuggingFragment"
+                        }
                     val intent = android.content.Intent(context, subSettingsClass)
-                    intent.putExtra(":settings:show_fragment", "com.android.settings.development.WirelessDebuggingFragment")
+                    intent.putExtra(":settings:show_fragment", fragmentClass)
                     context.startActivity(intent)
                 } catch (e: Exception) {
                     XposedBridge.log("HotspotAdb: failed to open wireless debugging: $e")
