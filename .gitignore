@@ -11,3 +11,4 @@
 /secrets
 *secrets.txt
 *.fix
+*.patch
