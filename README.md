@@ -65,11 +65,25 @@ The module has two hook domains:
   ADB daemon to tear down wireless debugging when the device is not a Wi-Fi client
 
 ### Android 16 compatibility
-- **AdbConnectionInfo**: tries top-level `com.android.server.adb.AdbConnectionInfo` (Android 16
-  refactoring) first, falls back to nested `AdbDebuggingManager$AdbConnectionInfo` (Android 15)
-- **Network monitor**: tries named classes (`AdbBroadcastReceiver`, `AdbNetworkMonitor`,
-  `AdbWifiNetworkMonitor`) first, then falls back to anonymous inner class scan (Android 15),
-  and finally to a `Settings.Global.putInt` intercept as a last resort
+
+All Android 16 QPR2 class names have been confirmed against AOSP source:
+
+- **AdbConnectionInfo**: `com.android.server.adb.AdbConnectionInfo` (top-level, package-private
+  `(String bssid, String ssid)` constructor).  Falls back to nested
+  `AdbDebuggingManager$AdbConnectionInfo` for Android 15.
+- **Network monitor path A** (default, `allowAdbWifiReconnect` enabled): `AdbWifiNetworkMonitor`
+  is a `ConnectivityManager.NetworkCallback`.  `onLost()` and `onCapabilitiesChanged()` are
+  hooked to suppress framework-driven ADB Wi-Fi teardown while hotspot is active.
+- **Network monitor path B** (`allowAdbWifiReconnect` disabled): `AdbBroadcastReceiver`
+  handles `WIFI_STATE_CHANGED` / `NETWORK_STATE_CHANGED` broadcasts.  Hooked via `onReceive()`.
+- Both paths are hooked whenever the classes are present; the runtime choice between them is
+  made by `AdbDebuggingManager` at boot and cannot be predicted at hook installation time.
+- **Android 15 fallback**: if neither named class is found, anonymous inner `BroadcastReceiver`
+  classes of `AdbDebuggingHandler` are scanned and hooked.
+
+User-initiated disables (Developer Options toggle, hotspot settings toggle) write
+`Settings.Global.ADB_WIFI_ENABLED` directly and are **not** routed through the network monitor
+or `AdbBroadcastReceiver`, so the hooks above do not interfere with user intent.
 
 ## Building from source
 
@@ -83,13 +97,45 @@ make clean     # clean build artifacts
 
 ## Known limitations / runtime verification needed
 
-- `AdbDebuggingHandler.getCurrentWifiApInfo()` signature and the exact shape of
-  `AdbConnectionInfo`'s constructor on Android 16 QPR2+ are confirmed from AOSP source but
-  require on-device validation on a final build.
-- The named ADB monitor classes (`AdbBroadcastReceiver`, etc.) are speculative for Android 16;
-  the fallback to anonymous inner class scanning will activate if they are absent.
-- Settings UI class paths (`WirelessDebuggingPreferenceController`, `WifiTetherSettings`) may
-  differ on OEM builds.
+- `AdbDebuggingHandler.getCurrentWifiApInfo()` is confirmed in AOSP Android 16 QPR2 source.
+  On-device validation on build `CP1A.260305.018` is still pending.
+- `AdbWifiNetworkMonitor.onLost()` and `onCapabilitiesChanged()` override resolution requires
+  on-device validation (method deoptimize + hook chain); if either is not overridden in the
+  concrete class, the hook will not be installed but a WARN log entry will appear.
+- Settings UI class paths (`WirelessDebuggingPreferenceController`, `WifiTetherSettings`) are
+  confirmed standard AOSP names.  On the target device (`SettingsGoogle`,
+  `codePath=/system_ext/priv-app/SettingsGoogle`), `pm path` is unreliable; use
+  `dumpsys package com.android.settings` to confirm the codePath.
+- `WIFI_AP_STATE_ENABLED = 13` is confirmed for Android 15/16.  If a device OEM changes this
+  constant, `isHotspotActive()` would return false silently; the WARN log from
+  `getWifiApState()` reflection would surface this.
+
+## Troubleshooting
+
+To verify the module loaded correctly, filter LSPosed / logcat for `HotspotAdb`:
+
+```shell
+adb logcat -s HotspotAdb
+```
+
+Expected log entries after boot:
+- `module loaded in system_server` (framework version line follows)
+- `hooked AdbDebuggingHandler.getCurrentWifiApInfo`
+- `resolved AdbConnectionInfo ctor: com.android.server.adb.AdbConnectionInfo`
+- `found AdbWifiNetworkMonitor; installing Android 16 NetworkCallback hooks` (Android 16)
+- `hooked AdbWifiNetworkMonitor.onLost`
+- `hooked AdbWifiNetworkMonitor.onCapabilitiesChanged`
+- `hooked BroadcastReceiver.onReceive via AdbBroadcastReceiver path` (Android 16)
+- `module loaded in com.android.settings`
+- `hooked WirelessDebuggingPreferenceController.isWifiConnected`
+- `hooked AdbIpAddressPreferenceController.getIpv4Address`
+- `hooked WifiTetherSettings.onStart`
+- `hooked WifiTetherSettings.onStop for listener cleanup`
+
+When hotspot is active and wireless debugging starts:
+- `getCurrentWifiApInfo → synthetic (bssid=02:00:00:00:00:00 ssid=...)`
+- `blocked AdbWifiNetworkMonitor.onLost (hotspot active; framework-driven disable suppressed)`
+- `hotspot IP via wlan1: 10.x.x.x` (or similar interface/IP)
 
 ## Other solutions
 

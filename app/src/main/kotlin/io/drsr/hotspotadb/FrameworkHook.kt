@@ -9,39 +9,55 @@ import io.github.libxposed.api.XposedModule
 import java.lang.reflect.Constructor
 
 /**
- * Hooks in the system_server (android scope) that keep Wireless Debugging alive while a Wi-Fi
+ * Hooks in system_server (android scope) that keep Wireless Debugging alive while a Wi-Fi
  * hotspot is active.
  *
- * Two interception points:
+ * Hook point 1 — getCurrentWifiApInfo()
+ *   AdbDebuggingHandler.getCurrentWifiApInfo() returns null when no station Wi-Fi is connected,
+ *   which causes the framework to refuse to start wireless debugging.  When hotspot is active we
+ *   return a synthetic AdbConnectionInfo so the framework accepts the AP network.
  *
- * 1. AdbDebuggingHandler.getCurrentWifiApInfo()
- *    Returns the AP info used to verify the trusted network.  When no station Wi-Fi is
- *    connected but a hotspot is active the method returns null, which would disable wireless
- *    debugging.  We synthesise an AdbConnectionInfo so the framework accepts the hotspot network.
+ * Hook point 2 — network monitor / receiver suppression
  *
- * 2. BroadcastReceiver.onReceive() for WIFI_STATE_CHANGED / NETWORK_STATE_CHANGED
- *    ADB Wi-Fi monitoring reacts to these broadcasts by tearing down the connection when the
- *    device is no longer a Wi-Fi client.  We suppress those events while hotspot is active.
+ *   Android 16 (allowAdbWifiReconnect enabled, the default):
+ *     AdbWifiNetworkMonitor is a ConnectivityManager.NetworkCallback.  Its onLost() and
+ *     onCapabilitiesChanged() tear down wireless debugging when the device loses station Wi-Fi.
+ *     We suppress those callbacks while hotspot is active.
+ *     Confirmed in Android 16 QPR2 AOSP: com.android.server.adb.AdbWifiNetworkMonitor.
  *
- * Android 16 compatibility strategy
- * - AdbConnectionInfo: try top-level com.android.server.adb.AdbConnectionInfo first (Android 16),
- *   then nested AdbDebuggingManager$AdbConnectionInfo (Android 15).
- * - Receiver class: try named candidates first (Android 16 refactoring), then anonymous inner
- *   class scan (Android 15), then Settings.Global.putInt fallback as last resort.
+ *   Android 16 (allowAdbWifiReconnect disabled):
+ *     AdbBroadcastReceiver handles WIFI_STATE_CHANGED / NETWORK_STATE_CHANGED broadcasts.
+ *     Confirmed in Android 16 QPR2 AOSP: com.android.server.adb.AdbBroadcastReceiver.
+ *
+ *   Android 15:
+ *     Anonymous inner BroadcastReceiver classes inside AdbDebuggingHandler handle the same
+ *     broadcasts.  Scanned by index and hooked identically.
+ *
+ *   Both AdbWifiNetworkMonitor and AdbBroadcastReceiver hooks are always installed when the
+ *   classes are present, because AdbDebuggingManager chooses between them at runtime via
+ *   allowAdbWifiReconnect() — we cannot predict which path will be active.
+ *
+ * User-initiated disables (Developer Options toggle, hotspot settings toggle) write
+ * Settings.Global.ADB_WIFI_ENABLED directly and are NOT routed through AdbWifiNetworkMonitor
+ * or AdbBroadcastReceiver.  Suppressing those classes does not interfere with user intent.
+ *
+ * AdbConnectionInfo resolution (Android 16 QPR2 AOSP confirmed):
+ *   Primary: com.android.server.adb.AdbConnectionInfo (top-level, package-private ctor)
+ *   Fallback: com.android.server.adb.AdbDebuggingManager$AdbConnectionInfo (Android 15 nested)
  */
 object FrameworkHook {
 
     // Stable synthetic BSSID.  ADB uses BSSID as part of the trusted-network fingerprint.
-    // A fixed value prevents trust from being reset every time the hotspot is re-enabled
+    // Fixed value prevents trust from resetting every time hotspot is re-enabled
     // (Android randomises the real hotspot MAC on each enable cycle).
     private const val SYNTHETIC_BSSID = "02:00:00:00:00:00"
 
-    // Resolved once at install time; null means no suitable constructor was found.
+    // Resolved once at install time; null if no suitable constructor was found.
     private var connectionInfoCtor: Constructor<*>? = null
 
     fun install(classLoader: ClassLoader, module: XposedModule) {
         hookGetCurrentWifiApInfo(classLoader, module)
-        hookNetworkMonitorOrFallback(classLoader, module)
+        hookNetworkMonitors(classLoader, module)
     }
 
     // ---- getCurrentWifiApInfo ----
@@ -62,11 +78,10 @@ object FrameworkHook {
             return
         }
 
-        // Resolve AdbConnectionInfo constructor once; log which branch was selected.
         connectionInfoCtor = resolveConnectionInfoCtor(classLoader, module)
 
-        // Deoptimise to prevent the JIT from inlining callers (e.g. handleMessage) and
-        // skipping the hook.
+        // Deoptimise: prevent the JIT from inlining callers (e.g. handleMessage) and
+        // bypassing the hook.
         module.deoptimize(method)
 
         module.hook(method).intercept { chain ->
@@ -97,9 +112,9 @@ object FrameworkHook {
     /**
      * Resolve AdbConnectionInfo(String bssid, String ssid) constructor.
      *
-     * Candidate order:
-     *  1. com.android.server.adb.AdbConnectionInfo          (Android 16, top-level class)
-     *  2. com.android.server.adb.AdbDebuggingManager$AdbConnectionInfo  (Android 15, nested)
+     * Android 16 QPR2 AOSP: com.android.server.adb.AdbConnectionInfo — top-level class with
+     *   package-private (String, String) constructor.
+     * Android 15: com.android.server.adb.AdbDebuggingManager$AdbConnectionInfo — nested class.
      */
     private fun resolveConnectionInfoCtor(classLoader: ClassLoader, module: XposedModule): Constructor<*>? {
         val candidates = listOf(
@@ -112,7 +127,7 @@ object FrameworkHook {
                 clazz.getDeclaredConstructor(String::class.java, String::class.java)
                     .also {
                         it.isAccessible = true
-                        module.log(Log.INFO, TAG, "resolved AdbConnectionInfo as $name")
+                        module.log(Log.INFO, TAG, "resolved AdbConnectionInfo ctor: $name")
                     }
             } catch (e: NoSuchMethodException) {
                 module.log(Log.DEBUG, TAG, "no (String,String) ctor in $name: $e")
@@ -123,36 +138,158 @@ object FrameworkHook {
         return null
     }
 
-    // ---- BroadcastReceiver / network monitor hooks ----
+    // ---- Network monitor / BroadcastReceiver hooks ----
 
-    private fun hookNetworkMonitorOrFallback(classLoader: ClassLoader, module: XposedModule) {
-        // Android 16 may introduce dedicated top-level or named inner classes for ADB Wi-Fi
-        // monitoring.  Try named candidates before falling back to the anonymous inner class
-        // scan used on Android 15.
-        val namedCandidates = listOf(
-            "com.android.server.adb.AdbDebuggingManager\$AdbBroadcastReceiver",
+    /**
+     * Install all applicable network monitor hooks.
+     *
+     * Hooks are installed on every class that is present in the classloader.  We do not stop
+     * after the first success because AdbDebuggingManager selects between AdbWifiNetworkMonitor
+     * and AdbBroadcastReceiver at runtime via allowAdbWifiReconnect(); both may be compiled in.
+     *
+     * Hook selection order:
+     *   1. AdbWifiNetworkMonitor (Android 16, NetworkCallback — NOT a BroadcastReceiver)
+     *   2. AdbBroadcastReceiver  (Android 16, BroadcastReceiver)
+     *   3. Anonymous inner BroadcastReceiver scan (Android 15 fallback)
+     *
+     * No Settings.Global.putInt fallback: that intercept is too broad and would block
+     * user-initiated disables (Developer Options toggle, hotspot settings toggle).
+     */
+    private fun hookNetworkMonitors(classLoader: ClassLoader, module: XposedModule) {
+        var anyHookInstalled = false
+
+        // Path A: AdbWifiNetworkMonitor — ConnectivityManager.NetworkCallback (Android 16 default).
+        // Not a BroadcastReceiver; hooks onLost() and onCapabilitiesChanged().
+        if (hookAdbWifiNetworkMonitor(classLoader, module)) {
+            anyHookInstalled = true
+        }
+
+        // Path B: AdbBroadcastReceiver — BroadcastReceiver (Android 16 when allowAdbWifiReconnect disabled).
+        for (name in listOf(
             "com.android.server.adb.AdbBroadcastReceiver",
-            "com.android.server.adb.AdbDebuggingManager\$AdbNetworkMonitor",
-            "com.android.server.adb.AdbNetworkMonitor",
-            "com.android.server.adb.AdbWifiNetworkMonitor",
-        )
-        for (name in namedCandidates) {
+            "com.android.server.adb.AdbDebuggingManager\$AdbBroadcastReceiver",
+        )) {
             val clazz = tryFindClass(name, classLoader) ?: continue
-            if (!BroadcastReceiver::class.java.isAssignableFrom(clazz)) continue
-            if (hookOnReceive(clazz, module, "named receiver $name")) return
+            if (!BroadcastReceiver::class.java.isAssignableFrom(clazz)) {
+                module.log(Log.DEBUG, TAG, "$name is not a BroadcastReceiver; skipping onReceive hook")
+                continue
+            }
+            if (hookOnReceive(clazz, module, "AdbBroadcastReceiver path ($name)")) {
+                anyHookInstalled = true
+            }
         }
 
-        // Fall back: anonymous inner classes of AdbDebuggingHandler (Android 15 path).
-        val baseName = "com.android.server.adb.AdbDebuggingManager\$AdbDebuggingHandler"
-        for (i in 1..15) {
-            val clazz = tryFindClass("$baseName\$$i", classLoader) ?: continue
-            if (!BroadcastReceiver::class.java.isAssignableFrom(clazz)) continue
-            if (hookOnReceive(clazz, module, "anonymous inner class $baseName\$$i (Android 15 path)")) return
+        // Path C: anonymous inner BroadcastReceiver — Android 15 fallback.
+        // Only attempt if no named Android 16 class was found.
+        if (!anyHookInstalled) {
+            module.log(
+                Log.INFO,
+                TAG,
+                "no named Android 16 monitor classes found; scanning for Android 15 anonymous BroadcastReceiver",
+            )
+            val baseName = "com.android.server.adb.AdbDebuggingManager\$AdbDebuggingHandler"
+            for (i in 1..15) {
+                val clazz = tryFindClass("$baseName\$$i", classLoader) ?: continue
+                if (!BroadcastReceiver::class.java.isAssignableFrom(clazz)) continue
+                if (hookOnReceive(clazz, module, "anonymous inner class $i (Android 15)")) {
+                    anyHookInstalled = true
+                    break
+                }
+            }
         }
 
-        // Last resort: intercept Settings.Global.putInt to block adb_wifi_enabled=0.
-        module.log(Log.INFO, TAG, "no ADB BroadcastReceiver found; activating Settings.Global.putInt fallback")
-        hookSettingsGlobalFallback(classLoader, module)
+        if (!anyHookInstalled) {
+            // No fallback to Settings.Global.putInt: that hook is too broad and blocks
+            // user-driven disables.  Log the miss so it is visible in LSPosed logs.
+            module.log(
+                Log.WARN,
+                TAG,
+                "WARNING: no ADB network monitor or BroadcastReceiver hook installed; " +
+                    "framework-driven wireless debugging teardown will NOT be suppressed",
+            )
+        }
+    }
+
+    /**
+     * Hook AdbWifiNetworkMonitor (ConnectivityManager.NetworkCallback) on Android 16.
+     *
+     * AdbDebuggingManager uses AdbWifiNetworkMonitor when allowAdbWifiReconnect() is enabled
+     * (the default on Android 16).  When the station Wi-Fi network is lost or changes to a
+     * state without connectivity, the monitor calls setAdbWifiState(false, reason), which
+     * disables wireless debugging.
+     *
+     * We suppress onLost() and onCapabilitiesChanged() while hotspot is active.
+     * User-initiated disables go through Settings.Global directly and are not affected.
+     *
+     * Android 16 QPR2 AOSP: com.android.server.adb.AdbWifiNetworkMonitor confirmed.
+     */
+    private fun hookAdbWifiNetworkMonitor(classLoader: ClassLoader, module: XposedModule): Boolean {
+        val clazz = tryFindClass("com.android.server.adb.AdbWifiNetworkMonitor", classLoader) ?: run {
+            module.log(Log.DEBUG, TAG, "AdbWifiNetworkMonitor not found (Android < 16?)")
+            return false
+        }
+
+        val networkClass = tryFindClass("android.net.Network", classLoader) ?: run {
+            module.log(Log.WARN, TAG, "android.net.Network not found; cannot hook AdbWifiNetworkMonitor")
+            return false
+        }
+        val networkCapabilitiesClass = tryFindClass("android.net.NetworkCapabilities", classLoader)
+
+        module.log(Log.INFO, TAG, "found AdbWifiNetworkMonitor; installing Android 16 NetworkCallback hooks")
+        var installed = false
+
+        // onLost(Network): fired when the station Wi-Fi network is lost entirely.
+        try {
+            val onLost = clazz.getDeclaredMethod("onLost", networkClass).also { it.isAccessible = true }
+            module.deoptimize(onLost)
+            module.hook(onLost).intercept { chain ->
+                val ctx = getContextFromMonitor(chain.getThisObject())
+                if (ctx != null && HotspotHelper.isHotspotActive(ctx)) {
+                    module.log(
+                        Log.INFO,
+                        TAG,
+                        "blocked AdbWifiNetworkMonitor.onLost (hotspot active; framework-driven disable suppressed)",
+                    )
+                    null
+                } else {
+                    chain.proceed()
+                }
+            }
+            module.log(Log.INFO, TAG, "hooked AdbWifiNetworkMonitor.onLost")
+            installed = true
+        } catch (e: Exception) {
+            module.log(Log.WARN, TAG, "failed to hook AdbWifiNetworkMonitor.onLost: $e")
+        }
+
+        // onCapabilitiesChanged(Network, NetworkCapabilities): fired when network capabilities
+        // change, e.g. when the Wi-Fi network loses connectivity or internet access.
+        if (networkCapabilitiesClass != null) {
+            try {
+                val onCaps = clazz.getDeclaredMethod(
+                    "onCapabilitiesChanged",
+                    networkClass,
+                    networkCapabilitiesClass,
+                ).also { it.isAccessible = true }
+                module.deoptimize(onCaps)
+                module.hook(onCaps).intercept { chain ->
+                    val ctx = getContextFromMonitor(chain.getThisObject())
+                    if (ctx != null && HotspotHelper.isHotspotActive(ctx)) {
+                        module.log(Log.INFO, TAG, "blocked AdbWifiNetworkMonitor.onCapabilitiesChanged (hotspot active)")
+                        null
+                    } else {
+                        chain.proceed()
+                    }
+                }
+                module.log(Log.INFO, TAG, "hooked AdbWifiNetworkMonitor.onCapabilitiesChanged")
+                installed = true
+            } catch (e: Exception) {
+                module.log(Log.WARN, TAG, "failed to hook AdbWifiNetworkMonitor.onCapabilitiesChanged: $e")
+            }
+        } else {
+            module.log(Log.WARN, TAG, "android.net.NetworkCapabilities not found; onCapabilitiesChanged hook skipped")
+        }
+
+        return installed
     }
 
     private fun hookOnReceive(clazz: Class<*>, module: XposedModule, label: String): Boolean {
@@ -169,8 +306,8 @@ object FrameworkHook {
                             action == WifiManager.NETWORK_STATE_CHANGED_ACTION) &&
                     HotspotHelper.isHotspotActive(context)
                 ) {
-                    module.log(Log.INFO, TAG, "suppressed $action via $label (hotspot active)")
-                    null // void method — suppresses the call by not invoking proceed()
+                    module.log(Log.INFO, TAG, "suppressed broadcast $action via $label (hotspot active)")
+                    null
                 } else {
                     chain.proceed()
                 }
@@ -183,70 +320,48 @@ object FrameworkHook {
         }
     }
 
-    /**
-     * Fallback only — active when no ADB BroadcastReceiver hook was installed.
-     * Intercepts Settings.Global.putInt to prevent ADB_WIFI_ENABLED being set to 0 while
-     * the hotspot is active.
-     */
-    private fun hookSettingsGlobalFallback(classLoader: ClassLoader, module: XposedModule) {
-        try {
-            val settingsGlobal = Class.forName("android.provider.Settings\$Global", false, classLoader)
-            val putInt = settingsGlobal.getDeclaredMethod(
-                "putInt",
-                android.content.ContentResolver::class.java,
-                String::class.java,
-                Int::class.javaPrimitiveType,
-            ).also { it.isAccessible = true }
-
-            module.hook(putInt).intercept { chain ->
-                val key = chain.getArg(1) as? String
-                val value = chain.getArg(2) as? Int
-                if (key == "adb_wifi_enabled" && value == 0) {
-                    val resolver = chain.getArg(0) as? android.content.ContentResolver
-                    val context = resolver?.let { getContextFromResolver(it) }
-                    if (context != null && HotspotHelper.isHotspotActive(context)) {
-                        module.log(Log.INFO, TAG, "blocked ADB_WIFI_ENABLED=0 via Settings.Global fallback (hotspot active)")
-                        return@intercept false
-                    }
-                }
-                chain.proceed()
-            }
-            module.log(Log.INFO, TAG, "installed Settings.Global.putInt fallback hook")
-        } catch (e: Exception) {
-            module.log(Log.ERROR, TAG, "failed to install Settings.Global.putInt fallback: $e")
-        }
-    }
-
-    // ---- Reflection helpers ----
+    // ---- Context extraction helpers ----
 
     /**
-     * Get the Context from an AdbDebuggingHandler instance.
+     * Extract Context from an AdbDebuggingHandler instance.
      *
-     * On Android 15: AdbDebuggingHandler is an inner class of AdbDebuggingManager.
-     *   handler.this$0 → AdbDebuggingManager instance → .mContext
-     * On Android 16: if the class was made top-level, try searching for a Context-typed field
-     * directly on the handler, or for a field whose type is AdbDebuggingManager.
+     * Android 15: handler is an inner class of AdbDebuggingManager.
+     *   this$0 → AdbDebuggingManager → mContext
+     * Android 16: handler may be top-level with a direct mContext field, or hold a reference
+     *   to AdbDebuggingManager.
      */
     private fun getContext(handler: Any?): Context? {
         handler ?: return null
         return try {
-            // Android 15: inner class reference
             val outer = getFieldValue(handler, "this\$0")
                 ?: findFieldByTypeName(handler, "com.android.server.adb.AdbDebuggingManager")
-                ?: handler // handler might be top-level and have mContext directly
-
+                ?: handler
             (getFieldValue(outer, "mContext") as? Context)
                 ?: (getFieldValue(handler, "mContext") as? Context)
         } catch (e: Exception) {
-            Log.w(TAG, "HotspotAdb: failed to get context from handler: $e")
+            Log.w(TAG, "$TAG: failed to get context from handler: $e")
             null
         }
     }
 
-    private fun getContextFromResolver(resolver: android.content.ContentResolver): Context? {
+    /**
+     * Extract Context from an AdbWifiNetworkMonitor instance.
+     *
+     * AdbWifiNetworkMonitor holds a reference to AdbDebuggingManager (which has mContext),
+     * or potentially has its own mContext field.
+     */
+    private fun getContextFromMonitor(monitor: Any?): Context? {
+        monitor ?: return null
         return try {
-            resolver.javaClass.getMethod("getContext").invoke(resolver) as? Context
-        } catch (_: Exception) {
+            (getFieldValue(monitor, "mContext") as? Context)
+                ?: run {
+                    val manager = getFieldValue(monitor, "mAdbDebuggingManager")
+                        ?: findFieldByTypeName(monitor, "com.android.server.adb.AdbDebuggingManager")
+                        ?: getFieldValue(monitor, "this\$0")
+                    manager?.let { getFieldValue(it, "mContext") as? Context }
+                }
+        } catch (e: Exception) {
+            Log.w(TAG, "$TAG: failed to get context from AdbWifiNetworkMonitor: $e")
             null
         }
     }
@@ -261,6 +376,8 @@ object FrameworkHook {
             "HotspotAP"
         }
     }
+
+    // ---- Reflection utilities ----
 
     private fun tryFindClass(name: String, classLoader: ClassLoader): Class<*>? {
         return try {

@@ -49,12 +49,17 @@ object HotspotHelper {
                 for (addr in iface.inetAddresses) {
                     if (addr is Inet4Address && !addr.isLoopbackAddress) {
                         val ip = addr.hostAddress ?: continue
-                        if (ip != excludeIp) return ip
+                        if (ip == excludeIp) {
+                            Log.d(TAG, "$TAG: skipping ${iface.name} ($ip) — station Wi-Fi IP")
+                            continue
+                        }
+                        Log.i(TAG, "$TAG: hotspot IP via ${iface.name}: $ip")
+                        return ip
                     }
                 }
             }
         } catch (e: Exception) {
-            Log.w(TAG, "HotspotAdb: failed to get hotspot IP: $e")
+            Log.w(TAG, "$TAG: failed to get hotspot IP: $e")
         }
         return null
     }
