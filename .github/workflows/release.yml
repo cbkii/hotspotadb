@@ -42,6 +42,9 @@ jobs:
       - name: Resolve release metadata
         id: meta
         shell: bash
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+          INPUT_NAME: ${{ inputs.name }}
         run: |
           set -euo pipefail
 
@@ -51,17 +54,19 @@ jobs:
           [ -n "$VERSION_NAME" ] || { echo "::error::Could not parse versionName from app/build.gradle.kts"; exit 1; }
           [ -n "$VERSION_CODE" ] || { echo "::error::Could not parse versionCode from app/build.gradle.kts"; exit 1; }
 
-          INPUT_TAG='${{ inputs.tag }}'
-          INPUT_NAME='${{ inputs.name }}'
+          # Sanitize inputs: strip newlines/CRs and quotes, then percent-encode
+          # slashes so the values are safe in shell, filenames, and GITHUB_OUTPUT.
+          SAFE_TAG="$(printf '%s' "$INPUT_TAG" | tr -d '\n\r' | tr -d "'\"" | sed 's|/|%2F|g')"
+          SAFE_NAME="$(printf '%s' "$INPUT_NAME" | tr -d '\n\r' | tr -d "'\"" | sed 's|/|%2F|g')"
 
-          if [ -n "$INPUT_TAG" ]; then
-            TAG="$INPUT_TAG"
+          if [ -n "$SAFE_TAG" ]; then
+            TAG="$SAFE_TAG"
           else
             TAG="$VERSION_NAME"
           fi
 
-          if [ -n "$INPUT_NAME" ]; then
-            RELEASE_NAME="$INPUT_NAME"
+          if [ -n "$SAFE_NAME" ]; then
+            RELEASE_NAME="$SAFE_NAME"
           else
             RELEASE_NAME="$TAG"
           fi
@@ -252,7 +257,13 @@ jobs:
           TAG='${{ steps.meta.outputs.tag }}'
 
           if git rev-parse -q --verify "refs/tags/$TAG" > /dev/null; then
-            echo "Tag $TAG already exists; leaving it unchanged."
+            existing_tag_sha="$(git rev-list -n1 "refs/tags/$TAG")"
+            if [ "$existing_tag_sha" = "$GITHUB_SHA" ]; then
+              echo "Tag $TAG already exists and points at the current commit ($GITHUB_SHA); leaving it unchanged."
+            else
+              echo "::error::Tag $TAG already exists but points at commit $existing_tag_sha, not the current commit $GITHUB_SHA"
+              exit 1
+            fi
           else
             git tag "$TAG" "$GITHUB_SHA"
             git push origin "refs/tags/$TAG"
