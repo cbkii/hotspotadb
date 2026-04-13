@@ -42,6 +42,9 @@ jobs:
       - name: Resolve release metadata
         id: meta
         shell: bash
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+          INPUT_NAME: ${{ inputs.name }}
         run: |
           set -euo pipefail
 
@@ -51,17 +54,17 @@ jobs:
           [ -n "$VERSION_NAME" ] || { echo "::error::Could not parse versionName from app/build.gradle.kts"; exit 1; }
           [ -n "$VERSION_CODE" ] || { echo "::error::Could not parse versionCode from app/build.gradle.kts"; exit 1; }
 
-          # toJSON() produces a double-quoted JSON string (internal " → \", \ → \\)
-          # so the assignment is safe regardless of single-quote or whitespace content.
-          # sanitize_tag then allowlists the result to characters valid in git tag
-          # names, artifact filenames, and GITHUB_OUTPUT values.
+          # Inputs are passed via env vars to avoid toJSON(null) expanding to the
+          # bare word "null" inside the script, which sanitize_* would pass through
+          # unchanged and leave TAG/RELEASE_NAME set to the literal string "null".
+          # sanitize_tag allowlists characters valid in git tag names and filenames.
           sanitize_tag() { printf '%s' "$1" | tr -cd 'a-zA-Z0-9._+-'; }
           # sanitize_name strips newlines/CRs and non-printable control characters
           # to protect GITHUB_OUTPUT while preserving human-readable display text.
           sanitize_name() { printf '%s' "$1" | tr -d '\n\r' | tr -cd '[:print:]'; }
 
-          SAFE_TAG="$(sanitize_tag ${{ toJSON(inputs.tag) }})"
-          SAFE_NAME="$(sanitize_name ${{ toJSON(inputs.name) }})"
+          SAFE_TAG="$(sanitize_tag "${INPUT_TAG:-}")"
+          SAFE_NAME="$(sanitize_name "${INPUT_NAME:-}")"
 
           if [ -n "$SAFE_TAG" ]; then
             TAG="$SAFE_TAG"
@@ -226,10 +229,10 @@ jobs:
         run: |
           set -euo pipefail
 
-          VERSION_NAME='${{ steps.meta.outputs.version_name }}'
+          TAG='${{ steps.meta.outputs.tag }}'
           NOTES_FILE=/tmp/release-notes.md
 
-          awk -v v="$VERSION_NAME" '
+          awk -v v="$TAG" '
             index($0, "## [" v "]") == 1 { found=1; print; next }
             found && /^## \[/ { exit }
             found { print }
