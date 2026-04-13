@@ -65,17 +65,25 @@ object SettingsHook {
         classLoader: ClassLoader,
         module: XposedModule,
     ) {
+        // Android 16+: AdbWirelessDebuggingPreferenceController; Android 15: WirelessDebuggingPreferenceController
         val clazz =
             tryFindClass(
+                "com.android.settings.development.AdbWirelessDebuggingPreferenceController",
+                classLoader,
+            ) ?: tryFindClass(
                 "com.android.settings.development.WirelessDebuggingPreferenceController",
                 classLoader,
             ) ?: run {
-                module.log(Log.WARN, TAG, "WirelessDebuggingPreferenceController not found; isWifiConnected hook skipped")
+                module.log(
+                    Log.WARN,
+                    TAG,
+                    "WirelessDebuggingPreferenceController not found (tried Android 16 and 15 names); isWifiConnected hook skipped",
+                )
                 return
             }
         val method =
             tryGetMethod(clazz, "isWifiConnected", Context::class.java) ?: run {
-                module.log(Log.WARN, TAG, "isWifiConnected not found in WirelessDebuggingPreferenceController")
+                module.log(Log.WARN, TAG, "isWifiConnected not found in ${clazz.simpleName}")
                 return
             }
 
@@ -93,7 +101,7 @@ object SettingsHook {
                 result
             }
         }
-        module.log(Log.INFO, TAG, "hooked WirelessDebuggingPreferenceController.isWifiConnected")
+        module.log(Log.INFO, TAG, "hooked ${clazz.simpleName}.isWifiConnected")
     }
 
     // ---- getIpv4Address ----
@@ -285,10 +293,21 @@ object SettingsHook {
                             tryFindClass("com.android.settings.SubSettings", context.classLoader)
                                 ?: tryFindClass("com.android.settings.SubSettings", classLoader)
                         if (subSettingsClass != null) {
+                            // Android 16+: AdbWirelessDebuggingFragment; Android 15: WirelessDebuggingFragment
+                            val fragmentClass =
+                                (
+                                    tryFindClass(
+                                        "com.android.settings.development.AdbWirelessDebuggingFragment",
+                                        classLoader,
+                                    ) ?: tryFindClass(
+                                        "com.android.settings.development.WirelessDebuggingFragment",
+                                        classLoader,
+                                    )
+                                )?.name ?: "com.android.settings.development.WirelessDebuggingFragment"
                             val intent = android.content.Intent(context, subSettingsClass)
                             intent.putExtra(
                                 ":settings:show_fragment",
-                                "com.android.settings.development.WirelessDebuggingFragment",
+                                fragmentClass,
                             )
                             context.startActivity(intent)
                         }
