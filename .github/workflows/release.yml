@@ -51,32 +51,47 @@ jobs:
           [ -n "$VERSION_NAME" ] || { echo "::error::Could not parse versionName from app/build.gradle.kts"; exit 1; }
           [ -n "$VERSION_CODE" ] || { echo "::error::Could not parse versionCode from app/build.gradle.kts"; exit 1; }
 
-          # toJSON() produces a double-quoted JSON string (internal " → \", \ → \\)
-          # so the assignment is safe regardless of single-quote or whitespace content.
-          # sanitize_tag then allowlists the result to characters valid in git tag
-          # names, artifact filenames, and GITHUB_OUTPUT values.
+          # ${{ inputs.tag || '' }} uses the GHA expression || operator so that a
+          # null or absent input becomes an empty string in the rendered script,
+          # without needing an env var.
+          # sanitize_tag allowlists characters valid in git tag names and filenames.
           sanitize_tag() { printf '%s' "$1" | tr -cd 'a-zA-Z0-9._+-'; }
           # sanitize_name strips newlines/CRs and non-printable control characters
           # to protect GITHUB_OUTPUT while preserving human-readable display text.
           sanitize_name() { printf '%s' "$1" | tr -d '\n\r' | tr -cd '[:print:]'; }
 
-          SAFE_TAG="$(sanitize_tag ${{ toJSON(inputs.tag) }})"
-          SAFE_NAME="$(sanitize_name ${{ toJSON(inputs.name) }})"
+          SAFE_TAG="$(sanitize_tag "${{ inputs.tag || '' }}")"
+          SAFE_NAME="$(sanitize_name "${{ inputs.name || '' }}")"
 
-          if [ -n "$SAFE_TAG" ]; then
-            TAG="$SAFE_TAG"
-          else
-            TAG="$VERSION_NAME"
-          fi
+          TAG="${SAFE_TAG:-$VERSION_NAME}"
 
-          if [ -n "$SAFE_NAME" ]; then
-            RELEASE_NAME="$SAFE_NAME"
-          else
-            RELEASE_NAME="$TAG"
-          fi
+          # Auto-bump the patch component whenever the resolved tag already exists.
+          # Keeps incrementing until a free slot is found so the workflow never
+          # fails simply because the tag was already used.
+          bump_patch() {
+            local tag="$1" prefix="" ver
+            [[ "$tag" == v* ]] && prefix="v" && ver="${tag#v}" || ver="$tag"
+            if [[ "$ver" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+) ]]; then
+              echo "${prefix}${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.$((BASH_REMATCH[3]+1))"
+            else
+              echo "${tag}.1"
+            fi
+          }
 
+          while git rev-parse -q --verify "refs/tags/$TAG" > /dev/null 2>&1; do
+            BUMPED="$(bump_patch "$TAG")"
+            echo "Tag $TAG already exists, auto-bumping to $BUMPED"
+            TAG="$BUMPED"
+          done
+
+          RELEASE_NAME="${SAFE_NAME:-$TAG}"
           APK_BASENAME="hotspotadb-${TAG}.apk"
           SHA256_NAME="${APK_BASENAME}.sha256"
+
+          # Fetch the most recent published (non-draft) release tag to build the
+          # compare link in the release description.
+          PREV_TAG="$(gh release list --repo "$GITHUB_REPOSITORY" --limit 1 \
+            --json tagName --jq '.[0].tagName // ""' 2>/dev/null || echo "")"
 
           {
             echo "version_name=$VERSION_NAME"
@@ -85,12 +100,14 @@ jobs:
             echo "release_name=$RELEASE_NAME"
             echo "apk_basename=$APK_BASENAME"
             echo "sha256_name=$SHA256_NAME"
+            echo "prev_tag=$PREV_TAG"
           } >> "$GITHUB_OUTPUT"
 
           echo "Resolved versionName: $VERSION_NAME"
           echo "Resolved versionCode: $VERSION_CODE"
           echo "Release tag: $TAG"
           echo "Release title: $RELEASE_NAME"
+          echo "Previous release tag: ${PREV_TAG:-<none>}"
 
       - name: Validate signing secrets
         shell: bash
@@ -226,21 +243,16 @@ jobs:
         run: |
           set -euo pipefail
 
-          VERSION_NAME='${{ steps.meta.outputs.version_name }}'
+          TAG='${{ steps.meta.outputs.tag }}'
+          PREV_TAG='${{ steps.meta.outputs.prev_tag }}'
+          REPO_URL='${{ github.server_url }}/${{ github.repository }}'
           NOTES_FILE=/tmp/release-notes.md
 
-          awk -v v="$VERSION_NAME" '
-            index($0, "## [" v "]") == 1 { found=1; print; next }
-            found && /^## \[/ { exit }
-            found { print }
-          ' CHANGELOG.md > "$NOTES_FILE"
-
-          if ! grep -q '[^[:space:]]' "$NOTES_FILE"; then
-            cat > "$NOTES_FILE" <<EOF
-          Release ${{ steps.meta.outputs.release_name }}
-
-          Built from commit ${{ github.sha }}.
-          EOF
+          if [ -n "$PREV_TAG" ]; then
+            printf '**Full Changelog**: %s/compare/%s...%s\n' \
+              "$REPO_URL" "$PREV_TAG" "$TAG" > "$NOTES_FILE"
+          else
+            printf 'Initial release.\n' > "$NOTES_FILE"
           fi
 
           echo "notes_file=$NOTES_FILE" >> "$GITHUB_OUTPUT"
@@ -286,3 +298,36 @@ jobs:
           draft: ${{ inputs.draft }}
           prerelease: ${{ inputs.prerelease }}
           fail_on_unmatched_files: true
+
+      - name: Sync versionName and versionCode back to codebase
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          TAG='${{ steps.meta.outputs.tag }}'
+
+          # Strip leading 'v' so versionName matches the bare semver string
+          # (e.g. tag "v2.1.3" → versionName "2.1.3"; tag "2.1.3" stays "2.1.3").
+          VERSION_STRING="${TAG#v}"
+
+          # Read the current versionCode and increment it for the next release.
+          CURRENT_CODE="$(sed -n 's/^[[:space:]]*versionCode[[:space:]]*=[[:space:]]*\([0-9][0-9]*\).*/\1/p' app/build.gradle.kts | head -n 1)"
+          NEW_CODE="$((CURRENT_CODE + 1))"
+
+          # Update versionName in-place.
+          sed -i "s/^\([[:space:]]*versionName[[:space:]]*=[[:space:]]*\)\"[^\"]*\"/\1\"${VERSION_STRING}\"/" app/build.gradle.kts
+
+          # Update versionCode in-place.
+          sed -i "s/^\([[:space:]]*versionCode[[:space:]]*=[[:space:]]*\)[0-9][0-9]*/\1${NEW_CODE}/" app/build.gradle.kts
+
+          echo "Updated versionName to: $VERSION_STRING"
+          echo "Updated versionCode to: $NEW_CODE"
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add app/build.gradle.kts
+          git commit -m "chore: bump versionName to ${TAG} and versionCode to ${NEW_CODE} after release [skip ci]"
+          git push origin "HEAD:${{ github.ref_name }}"
+
+          echo "Pushed version bump commit to ${{ github.ref_name }}"
