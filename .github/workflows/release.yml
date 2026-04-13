@@ -51,17 +51,26 @@ jobs:
           [ -n "$VERSION_NAME" ] || { echo "::error::Could not parse versionName from app/build.gradle.kts"; exit 1; }
           [ -n "$VERSION_CODE" ] || { echo "::error::Could not parse versionCode from app/build.gradle.kts"; exit 1; }
 
-          INPUT_TAG='${{ inputs.tag }}'
-          INPUT_NAME='${{ inputs.name }}'
+          # toJSON() produces a double-quoted JSON string (internal " → \", \ → \\)
+          # so the assignment is safe regardless of single-quote or whitespace content.
+          # sanitize_tag then allowlists the result to characters valid in git tag
+          # names, artifact filenames, and GITHUB_OUTPUT values.
+          sanitize_tag() { printf '%s' "$1" | tr -cd 'a-zA-Z0-9._+-'; }
+          # sanitize_name strips newlines/CRs and non-printable control characters
+          # to protect GITHUB_OUTPUT while preserving human-readable display text.
+          sanitize_name() { printf '%s' "$1" | tr -d '\n\r' | tr -cd '[:print:]'; }
 
-          if [ -n "$INPUT_TAG" ]; then
-            TAG="$INPUT_TAG"
+          SAFE_TAG="$(sanitize_tag ${{ toJSON(inputs.tag) }})"
+          SAFE_NAME="$(sanitize_name ${{ toJSON(inputs.name) }})"
+
+          if [ -n "$SAFE_TAG" ]; then
+            TAG="$SAFE_TAG"
           else
             TAG="$VERSION_NAME"
           fi
 
-          if [ -n "$INPUT_NAME" ]; then
-            RELEASE_NAME="$INPUT_NAME"
+          if [ -n "$SAFE_NAME" ]; then
+            RELEASE_NAME="$SAFE_NAME"
           else
             RELEASE_NAME="$TAG"
           fi
@@ -252,7 +261,13 @@ jobs:
           TAG='${{ steps.meta.outputs.tag }}'
 
           if git rev-parse -q --verify "refs/tags/$TAG" > /dev/null; then
-            echo "Tag $TAG already exists; leaving it unchanged."
+            existing_tag_sha="$(git rev-list -n1 "refs/tags/$TAG")"
+            if [ "$existing_tag_sha" = "$GITHUB_SHA" ]; then
+              echo "Tag $TAG already exists and points at the current commit ($GITHUB_SHA); leaving it unchanged."
+            else
+              echo "::error::Tag $TAG already exists but points at commit $existing_tag_sha, not the current commit $GITHUB_SHA"
+              exit 1
+            fi
           else
             git tag "$TAG" "$GITHUB_SHA"
             git push origin "refs/tags/$TAG"
