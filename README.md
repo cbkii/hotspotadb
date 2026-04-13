@@ -21,6 +21,15 @@ guests can connect via ADB while the device acts as a SoftAP / hotspot.
 > frameworks that only support the legacy `de.robv.android.xposed` API.  You need a current
 > LSPosed build (Vector era or equivalent).
 
+### Tested configurations
+
+| Device | Android | ROM | Zygisk | Xposed |
+|--------|---------|-----|--------|--------|
+| enchilada | 15 | LineageOS 22.2 | Magisk 30.7 or NeoZygisk 2.3 | LSPosed 1.9.2 or Vector 2.0 |
+| tucana | 16 | LineageOS 23.2 | Magisk 30.7 | Vector 2.0 |
+
+If this module works (or not) on your device/ROM, please [open an issue](https://github.com/cbkii/hotspotadb/issues) with details!
+
 ## Installation
 
 Grab the latest signed APK from [GitHub Releases](https://github.com/cbkii/hotspotadb/releases), or [build from source](#building-from-source).
@@ -49,12 +58,14 @@ would reset trust every time.
 The module has two hook domains:
 
 ### `com.android.settings` scope
-- `WirelessDebuggingPreferenceController.isWifiConnected(Context)` — returns `true` when
-  hotspot is active, so the Wireless Debugging UI stays usable
+- `AdbWirelessDebuggingPreferenceController.isWifiConnected(Context)` (Android 16) /
+  `WirelessDebuggingPreferenceController.isWifiConnected(Context)` (Android 15) — returns `true`
+  when hotspot is active, so the Wireless Debugging UI stays usable
 - `AdbIpAddressPreferenceController.getIpv4Address()` — returns the hotspot AP IP instead of
   the station Wi-Fi IP when hotspot is active
 - `WifiTetherSettings.onStart()` — injects a Wireless Debugging toggle directly into the
-  hotspot settings screen
+  hotspot settings screen; tapping it opens `AdbWirelessDebuggingFragment` (Android 16) or
+  `WirelessDebuggingFragment` (Android 15)
 
 ### `android` scope (system_server)
 - `AdbDebuggingHandler.getCurrentWifiApInfo()` — synthesises an `AdbConnectionInfo` when
@@ -131,7 +142,7 @@ Expected log entries after boot:
 - `hooked AdbWifiNetworkMonitor.onCapabilitiesChanged`
 - `hooked BroadcastReceiver.onReceive via AdbBroadcastReceiver path` (Android 16)
 - `module loaded in com.android.settings`
-- `hooked WirelessDebuggingPreferenceController.isWifiConnected`
+- `hooked AdbWirelessDebuggingPreferenceController.isWifiConnected` (Android 16) or `hooked WirelessDebuggingPreferenceController.isWifiConnected` (Android 15)
 - `hooked AdbIpAddressPreferenceController.getIpv4Address`
 - `hooked WifiTetherSettings.onStart`
 - `hooked WifiTetherSettings.onStop for listener cleanup`
