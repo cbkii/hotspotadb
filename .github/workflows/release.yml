@@ -298,3 +298,36 @@ jobs:
           draft: ${{ inputs.draft }}
           prerelease: ${{ inputs.prerelease }}
           fail_on_unmatched_files: true
+
+      - name: Sync versionName and versionCode back to codebase
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          TAG='${{ steps.meta.outputs.tag }}'
+
+          # Strip leading 'v' so versionName matches the bare semver string
+          # (e.g. tag "v2.1.3" → versionName "2.1.3"; tag "2.1.3" stays "2.1.3").
+          VERSION_STRING="${TAG#v}"
+
+          # Read the current versionCode and increment it for the next release.
+          CURRENT_CODE="$(sed -n 's/^[[:space:]]*versionCode[[:space:]]*=[[:space:]]*\([0-9][0-9]*\).*/\1/p' app/build.gradle.kts | head -n 1)"
+          NEW_CODE="$((CURRENT_CODE + 1))"
+
+          # Update versionName in-place.
+          sed -i "s/^\([[:space:]]*versionName[[:space:]]*=[[:space:]]*\)\"[^\"]*\"/\1\"${VERSION_STRING}\"/" app/build.gradle.kts
+
+          # Update versionCode in-place.
+          sed -i "s/^\([[:space:]]*versionCode[[:space:]]*=[[:space:]]*\)[0-9][0-9]*/\1${NEW_CODE}/" app/build.gradle.kts
+
+          echo "Updated versionName to: $VERSION_STRING"
+          echo "Updated versionCode to: $NEW_CODE"
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add app/build.gradle.kts
+          git commit -m "chore: bump versionName to ${TAG} and versionCode to ${NEW_CODE} after release [skip ci]"
+          git push origin "HEAD:${{ github.ref_name }}"
+
+          echo "Pushed version bump commit to ${{ github.ref_name }}"
