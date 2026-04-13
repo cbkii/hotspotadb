@@ -54,10 +54,16 @@ jobs:
           [ -n "$VERSION_NAME" ] || { echo "::error::Could not parse versionName from app/build.gradle.kts"; exit 1; }
           [ -n "$VERSION_CODE" ] || { echo "::error::Could not parse versionCode from app/build.gradle.kts"; exit 1; }
 
-          # Sanitize inputs: strip newlines/CRs and quotes, then percent-encode
-          # slashes so the values are safe in shell, filenames, and GITHUB_OUTPUT.
-          SAFE_TAG="$(printf '%s' "$INPUT_TAG" | tr -d '\n\r' | tr -d "'\"" | sed 's|/|%2F|g')"
-          SAFE_NAME="$(printf '%s' "$INPUT_NAME" | tr -d '\n\r' | tr -d "'\"" | sed 's|/|%2F|g')"
+          # sanitize_tag: keep only characters safe for git tag names, artifact
+          # filenames, and GITHUB_OUTPUT values (allowlist: alphanumeric, dot,
+          # underscore, hyphen, plus).
+          sanitize_tag() { printf '%s' "$1" | tr -cd 'a-zA-Z0-9._+-'; }
+          # sanitize_name: remove newlines/CRs and non-printable control
+          # characters to protect GITHUB_OUTPUT while preserving display text.
+          sanitize_name() { printf '%s' "$1" | tr -d '\n\r' | tr -cd '[:print:]'; }
+
+          SAFE_TAG="$(sanitize_tag "$INPUT_TAG")"
+          SAFE_NAME="$(sanitize_name "$INPUT_NAME")"
 
           if [ -n "$SAFE_TAG" ]; then
             TAG="$SAFE_TAG"
