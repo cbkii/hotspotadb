@@ -9,6 +9,7 @@
     -->
     <application
         android:label="@string/app_name"
-        android:description="@string/module_description" />
+        android:description="@string/module_description"
+        android:icon="@mipmap/ic_launcher" />
 
 </manifest>

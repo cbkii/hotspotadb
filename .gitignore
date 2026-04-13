@@ -8,6 +8,7 @@
 /captures
 .externalNativeBuild
 .cxx
+/secrets/
 /secrets
 *secrets.txt
 *secrets*
