@@ -40,7 +40,12 @@ Grab the latest APK from Xposed Module Repo, [GitHub Releases](https://github.co
 
 ### Fixed IP/port (optional)
 
-Flip the **Fixed IP/port** toggle on the Wireless Debugging screen to always use `192.168.49.1:5555` for `adb connect`. `192.168.49.1/24` is aliased on the hotspot interface and wireless ADB is exposed on port `5555` via a TCP proxy to adbd's ephemeral TLS port, so you can script `adb connect 192.168.49.1:5555` without caring about mDNS support in your `adb` build. Pairing still uses the dynamic port shown on screen (pairing is a one-time step).
+Flip the **Fixed IP/port** toggle on the Wireless Debugging screen to always use `192.168.49.1:5555` for `adb connect`. You can then script `adb connect 192.168.49.1:5555` without caring about mDNS support in your `adb` build. Pairing still uses the dynamic port shown on screen (pairing is a one-time step).
+
+How it works when enabled:
+
+- `192.168.49.1/24` is aliased on the hotspot interface via netd (secondary address, primary subnet is untouched)
+- A TCP proxy in `system_server` listens on `0.0.0.0:5555` and forwards to adbd's ephemeral TLS port — TLS is preserved end-to-end, the proxy is just a byte pipe
 
 Trade-off: if your upstream network is also on `192.168.49.0/24`, aliasing the same subnet on the hotspot will cause a routing collision. Leave the toggle off in that case.
 
