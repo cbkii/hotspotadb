@@ -26,7 +26,7 @@ If this module works (or not) on your device/ROM, please [open an issue](https:/
 Grab the latest APK from Xposed Module Repo, [GitHub Releases](https://github.com/droserasprout/io.drsr.hotspotadb/releases), or [build from source](#building-from-source).
 
 1. Install the APK
-2. Enable the module in LSPosed for both scopes:
+2. Enable the module in LSPosed for two scopes:
    - `com.android.settings`
    - `android` (System Framework)
 3. Reboot
@@ -37,6 +37,12 @@ Grab the latest APK from Xposed Module Repo, [GitHub Releases](https://github.co
 2. Use the Wireless Debugging toggle on the hotspot settings screen, or go to Developer Options > Wireless Debugging
 3. Pair your client device: `adb pair <ip>:<pairing_port> <pairing_code>`
 4. Connect: `adb connect <ip>:<port>`
+
+### Fixed IP/port (optional)
+
+Flip the **Fixed IP/port** toggle on the Wireless Debugging screen to always use `192.168.49.1:5555` for `adb connect`. `192.168.49.1/24` is aliased on the hotspot interface and wireless ADB is exposed on port `5555` via a TCP proxy to adbd's ephemeral TLS port, so you can script `adb connect 192.168.49.1:5555` without caring about mDNS support in your `adb` build. Pairing still uses the dynamic port shown on screen (pairing is a one-time step).
+
+Trade-off: if your upstream network is also on `192.168.49.0/24`, aliasing the same subnet on the hotspot will cause a routing collision. Leave the toggle off in that case.
 
 ## Building from source
 

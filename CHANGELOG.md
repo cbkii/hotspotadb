@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-04-16
+
+### Added
+
+- "Fixed IP/port" toggle on the Wireless Debugging screen. When enabled, aliases `192.168.49.1/24` on the hotspot interface and exposes wireless ADB on port `5555` (via a TCP proxy in system_server to adbd's ephemeral TLS port). `adb connect 192.168.49.1:5555` works every session without needing mDNS.
+
 ## [1.0.2] - 2026-04-12
 
 ### Added
@@ -22,6 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Initial release.
 
+[1.1.0]: https://github.com/droserasprout/io.drsr.hotspotadb/compare/1.0.2...1.1.0
 [1.0.2]: https://github.com/droserasprout/io.drsr.hotspotadb/compare/1.0.1...1.0.2
 [1.0.1]: https://github.com/droserasprout/io.drsr.hotspotadb/compare/1.0.0...1.0.1
 [1.0.0]: https://github.com/droserasprout/io.drsr.hotspotadb/releases/tag/1.0.0

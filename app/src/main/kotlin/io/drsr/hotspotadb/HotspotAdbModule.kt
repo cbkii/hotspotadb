@@ -6,6 +6,7 @@ import de.robv.android.xposed.callbacks.XC_LoadPackage
 
 class HotspotAdbModule : IXposedHookLoadPackage {
     override fun handleLoadPackage(lpparam: XC_LoadPackage.LoadPackageParam) {
+        XposedBridge.log("HotspotAdb: handleLoadPackage ${lpparam.packageName} / ${lpparam.processName}")
         when (lpparam.packageName) {
             "com.android.settings" -> {
                 XposedBridge.log("HotspotAdb: hooking Settings")
