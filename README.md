@@ -1,4 +1,4 @@
-<img src="screenshot.png" align="right" width="220">
+<img src="screen1.png" align="right" width="220">
 
 # Hotspot Wireless Debugging
 
@@ -39,6 +39,8 @@ Grab the latest APK from Xposed Module Repo, [GitHub Releases](https://github.co
 4. Connect: `adb connect <ip>:<port>`
 
 ### Fixed IP/port (optional)
+
+<img src="screen2.png" align="right" width="220">
 
 Flip the **Fixed IP/port** toggle on the Wireless Debugging screen to always use `192.168.49.1:5555` for `adb connect`. You can then script `adb connect 192.168.49.1:5555` without caring about mDNS support in your `adb` build. Pairing still uses the dynamic port shown on screen (pairing is a one-time step).
 
