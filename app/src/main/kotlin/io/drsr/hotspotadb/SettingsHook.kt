@@ -249,7 +249,9 @@ object SettingsHook {
 
         callMethod(pref, "setKey", "hotspot_adb_wireless_debugging")
         callMethod(pref, "setTitle", "Wireless debugging" as CharSequence)
-        val enabled = isAdbWifiEnabled(context)
+        // Show the EFFECTIVE state: wireless debugging is usable only when both ADB wifi and
+        // hotspot are active.  Mirrors upstream's updatePrefState fix (commit 5b6437a).
+        val enabled = isAdbWifiEnabled(context) && HotspotHelper.isHotspotActive(context)
         callMethod(pref, "setChecked", enabled)
         callMethod(pref, "setSummary", getWirelessDebuggingSummary(context, enabled) as CharSequence)
 
@@ -349,7 +351,8 @@ object SettingsHook {
                         selfChange: Boolean,
                         uri: Uri?,
                     ) {
-                        val on = isAdbWifiEnabled(context)
+                        // Reflect effective state: both ADB wifi and hotspot must be active.
+                        val on = isAdbWifiEnabled(context) && HotspotHelper.isHotspotActive(context)
                         callMethod(pref, "setChecked", on)
                         callMethod(pref, "setSummary", getWirelessDebuggingSummary(context, on) as CharSequence)
                     }
@@ -363,7 +366,8 @@ object SettingsHook {
             val handler = Handler(Looper.getMainLooper())
             val updatePref =
                 Runnable {
-                    val on = isAdbWifiEnabled(context)
+                    // Reflect effective state: both ADB wifi and hotspot must be active.
+                    val on = isAdbWifiEnabled(context) && HotspotHelper.isHotspotActive(context)
                     callMethod(pref, "setChecked", on)
                     callMethod(pref, "setSummary", getWirelessDebuggingSummary(context, on) as CharSequence)
                 }
