@@ -333,6 +333,7 @@ object SettingsHook {
             "Use ${HotspotHelper.FIXED_IP}:${HotspotHelper.FIXED_PORT}",
         )
         XposedHelpers.callMethod(pref, "setChecked", HotspotHelper.isFixedEndpointEnabled(context))
+        XposedHelpers.callMethod(pref, "setVisible", isAdbWifiEnabled(context))
 
         val changeListenerClass =
             XposedHelpers.findClass(
@@ -350,6 +351,12 @@ object SettingsHook {
                     HotspotHelper.FIXED_ENDPOINT_KEY,
                     if (newValue) 1 else 0,
                 )
+                // Refresh the IP/Port row above so it re-reads our getIpv4Address hook.
+                try {
+                    XposedHelpers.callMethod(fragment, "updatePreferenceStates")
+                } catch (e: Throwable) {
+                    XposedBridge.log("HotspotAdb: updatePreferenceStates failed: $e")
+                }
                 true
             }
         XposedHelpers.callMethod(pref, "setOnPreferenceChangeListener", changeProxy)
@@ -373,6 +380,26 @@ object SettingsHook {
         }
         XposedHelpers.callMethod(pref, "setOrder", targetIndex + 1)
         XposedHelpers.callMethod(screen, "addPreference", pref)
+
+        // Toggle visibility with the main Wireless Debugging switch on this screen.
+        val observerTag = "hotspot_adb_fixed_visibility"
+        if (XposedHelpers.getAdditionalInstanceField(fragment, observerTag) == null) {
+            val observer =
+                object : ContentObserver(Handler(Looper.getMainLooper())) {
+                    override fun onChange(
+                        selfChange: Boolean,
+                        uri: Uri?,
+                    ) {
+                        XposedHelpers.callMethod(pref, "setVisible", isAdbWifiEnabled(context))
+                    }
+                }
+            context.contentResolver.registerContentObserver(
+                Settings.Global.getUriFor(ADB_WIFI_ENABLED),
+                false,
+                observer,
+            )
+            XposedHelpers.setAdditionalInstanceField(fragment, observerTag, observer)
+        }
         XposedBridge.log("HotspotAdb: added Fixed IP/port toggle to Wireless Debugging")
     }
 
@@ -380,7 +407,7 @@ object SettingsHook {
         context: Context,
         pref: Any,
     ) {
-        val on = isAdbWifiEnabled(context)
+        val on = isAdbWifiEnabled(context) && HotspotHelper.isHotspotActive(context)
         XposedHelpers.callMethod(pref, "setChecked", on)
         XposedHelpers.callMethod(pref, "setSummary", getWirelessDebuggingSummary(context, on))
     }
