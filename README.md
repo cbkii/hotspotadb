@@ -1,4 +1,5 @@
-<img src="screen1.png" align="right" width="220">
+<!-- markdownlint-disable MD033 MD041 -->
+<img src="screen1.png" alt="Hotspot settings screen" align="right" width="220">
 
 # Hotspot Wireless Debugging
 
@@ -40,7 +41,7 @@ Grab the APK from Xposed Module Repo, [GitHub Releases](https://github.com/drose
 
 ### Fixed IP/port (optional)
 
-<img src="screen2.png" align="right" width="220">
+<img src="screen2.png" alt="Fixes IP/port setting" align="right" width="220">
 
 Flip **Fixed IP/port** to always listen on `192.168.49.1:5555`. Lets you script the command without needing mDNS in your `adb` build. Pairing still uses the ephemeral port shown on screen (one-time step).
 
