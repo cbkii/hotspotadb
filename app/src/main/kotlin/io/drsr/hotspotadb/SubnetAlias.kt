@@ -78,8 +78,10 @@ object SubnetAlias {
         val loader = frameworkLoader ?: return null
         return try {
             val sm = Class.forName("android.os.ServiceManager", true, loader)
-            val binder = sm.getMethod("getService", String::class.java)
-                .invoke(null, "netd") as? IBinder ?: return null
+            val binder =
+                sm.getMethod("getService", String::class.java)
+                    .invoke(null, "netd") as? IBinder
+                    ?: return null
             val stub =
                 try {
                     Class.forName("android.net.INetd\$Stub", true, loader)
