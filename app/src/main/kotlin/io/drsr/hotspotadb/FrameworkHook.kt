@@ -15,8 +15,6 @@ import de.robv.android.xposed.XposedHelpers
 import de.robv.android.xposed.callbacks.XC_LoadPackage
 
 object FrameworkHook {
-    private const val ADB_WIFI_ENABLED = "adb_wifi_enabled"
-
     @Volatile
     private var observersRegistered = false
 
@@ -111,7 +109,7 @@ object FrameworkHook {
                     observer,
                 )
                 resolver.registerContentObserver(
-                    Settings.Global.getUriFor(ADB_WIFI_ENABLED),
+                    Settings.Global.getUriFor(HotspotHelper.ADB_WIFI_ENABLED),
                     false,
                     observer,
                 )
@@ -127,38 +125,18 @@ object FrameworkHook {
         try {
             val hotspot = HotspotHelper.isHotspotActive(context)
             val fixed = HotspotHelper.isFixedEndpointEnabled(context)
-            val adb = isAdbWifiEnabled(context)
+            val adb = HotspotHelper.isAdbWifiEnabled(context)
 
             if (hotspot && fixed) SubnetAlias.apply(context) else SubnetAlias.remove()
 
             if (hotspot && fixed && adb) {
-                val realPort = getAdbWirelessPort()
+                val realPort = HotspotHelper.getAdbWirelessPort()
                 if (realPort > 0) AdbPortProxy.start(realPort) else AdbPortProxy.stop()
             } else {
                 AdbPortProxy.stop()
             }
         } catch (e: Exception) {
             XposedBridge.log("HotspotAdb: evaluateProxy failed: $e")
-        }
-    }
-
-    private fun isAdbWifiEnabled(context: Context): Boolean {
-        return Settings.Global.getInt(context.contentResolver, ADB_WIFI_ENABLED, 0) == 1
-    }
-
-    private fun getAdbWirelessPort(): Int {
-        return try {
-            val serviceManagerClass = Class.forName("android.os.ServiceManager")
-            val binder =
-                serviceManagerClass.getMethod("getService", String::class.java)
-                    .invoke(null, "adb")
-            val iAdbManagerStub = Class.forName("android.debug.IAdbManager\$Stub")
-            val adbService =
-                iAdbManagerStub.getMethod("asInterface", android.os.IBinder::class.java)
-                    .invoke(null, binder)
-            adbService.javaClass.getMethod("getAdbWirelessPort").invoke(adbService) as Int
-        } catch (_: Throwable) {
-            -1
         }
     }
 

@@ -20,9 +20,6 @@ object AdbPortProxy {
     private var serverSocket: ServerSocket? = null
 
     @Volatile
-    private var acceptor: Thread? = null
-
-    @Volatile
     private var boundToPort: Int = -1
 
     private val executor =
@@ -46,12 +43,10 @@ object AdbPortProxy {
                 ss.bind(InetSocketAddress("0.0.0.0", HotspotHelper.FIXED_PORT), 50)
                 serverSocket = ss
                 boundToPort = realPort
-                val t =
-                    Thread({ acceptLoop(ss, realPort) }, "HotspotAdb-Proxy-accept").apply {
-                        isDaemon = true
-                    }
-                acceptor = t
-                t.start()
+                Thread({ acceptLoop(ss, realPort) }, "HotspotAdb-Proxy-accept").apply {
+                    isDaemon = true
+                    start()
+                }
                 XposedBridge.log(
                     "HotspotAdb: proxy listening on 0.0.0.0:${HotspotHelper.FIXED_PORT} -> 127.0.0.1:$realPort",
                 )
@@ -75,7 +70,6 @@ object AdbPortProxy {
         val ss = serverSocket
         serverSocket = null
         boundToPort = -1
-        acceptor = null
         if (ss != null) {
             try {
                 ss.close()

@@ -9,6 +9,7 @@ import java.net.NetworkInterface
 
 object HotspotHelper {
     const val FIXED_ENDPOINT_KEY = "hotspot_adb_fixed_endpoint"
+    const val ADB_WIFI_ENABLED = "adb_wifi_enabled"
     const val FIXED_IP = "192.168.49.1"
     const val FIXED_PORT = 5555
 
@@ -16,6 +17,27 @@ object HotspotHelper {
 
     fun isFixedEndpointEnabled(context: Context): Boolean {
         return Settings.Global.getInt(context.contentResolver, FIXED_ENDPOINT_KEY, 0) == 1
+    }
+
+    fun isAdbWifiEnabled(context: Context): Boolean {
+        return Settings.Global.getInt(context.contentResolver, ADB_WIFI_ENABLED, 0) == 1
+    }
+
+    /** Returns adbd's current wireless TLS port, or -1 if unavailable. */
+    fun getAdbWirelessPort(): Int {
+        return try {
+            val serviceManagerClass = Class.forName("android.os.ServiceManager")
+            val binder =
+                serviceManagerClass.getMethod("getService", String::class.java)
+                    .invoke(null, "adb")
+            val iAdbManagerStub = Class.forName("android.debug.IAdbManager\$Stub")
+            val adbService =
+                iAdbManagerStub.getMethod("asInterface", android.os.IBinder::class.java)
+                    .invoke(null, binder)
+            adbService.javaClass.getMethod("getAdbWirelessPort").invoke(adbService) as Int
+        } catch (_: Throwable) {
+            -1
+        }
     }
 
     fun isHotspotActive(context: Context): Boolean {

@@ -16,8 +16,6 @@ import de.robv.android.xposed.XposedHelpers
 import de.robv.android.xposed.callbacks.XC_LoadPackage
 
 object SettingsHook {
-    private const val ADB_WIFI_ENABLED = "adb_wifi_enabled"
-
     fun init(lpparam: XC_LoadPackage.LoadPackageParam) {
         hookIsWifiConnected(lpparam)
         hookGetIpv4Address(lpparam)
@@ -99,7 +97,7 @@ object SettingsHook {
                         try {
                             val app = currentApplication() ?: return
                             if (!HotspotHelper.isFixedEndpointEnabled(app)) return
-                            if (!isAdbWifiEnabled(app)) return
+                            if (!HotspotHelper.isAdbWifiEnabled(app)) return
                             param.result = HotspotHelper.FIXED_PORT
                         } catch (e: Throwable) {
                             XposedBridge.log("HotspotAdb: port override failed: $e")
@@ -183,7 +181,7 @@ object SettingsHook {
                 arrayOf(changeListenerClass),
             ) { _, _, args ->
                 val newValue = args!![1] as Boolean
-                Settings.Global.putInt(context.contentResolver, ADB_WIFI_ENABLED, if (newValue) 1 else 0)
+                Settings.Global.putInt(context.contentResolver, HotspotHelper.ADB_WIFI_ENABLED, if (newValue) 1 else 0)
                 updatePrefState(context, pref)
                 true
             }
@@ -236,7 +234,7 @@ object SettingsHook {
                     }
                 }
             val resolver = context.contentResolver
-            resolver.registerContentObserver(Settings.Global.getUriFor(ADB_WIFI_ENABLED), false, observer)
+            resolver.registerContentObserver(Settings.Global.getUriFor(HotspotHelper.ADB_WIFI_ENABLED), false, observer)
             resolver.registerContentObserver(
                 Settings.Global.getUriFor(HotspotHelper.FIXED_ENDPOINT_KEY),
                 false,
@@ -333,7 +331,7 @@ object SettingsHook {
             "Use ${HotspotHelper.FIXED_IP}:${HotspotHelper.FIXED_PORT}",
         )
         XposedHelpers.callMethod(pref, "setChecked", HotspotHelper.isFixedEndpointEnabled(context))
-        XposedHelpers.callMethod(pref, "setVisible", isAdbWifiEnabled(context))
+        XposedHelpers.callMethod(pref, "setVisible", HotspotHelper.isAdbWifiEnabled(context))
 
         val changeListenerClass =
             XposedHelpers.findClass(
@@ -390,11 +388,11 @@ object SettingsHook {
                         selfChange: Boolean,
                         uri: Uri?,
                     ) {
-                        XposedHelpers.callMethod(pref, "setVisible", isAdbWifiEnabled(context))
+                        XposedHelpers.callMethod(pref, "setVisible", HotspotHelper.isAdbWifiEnabled(context))
                     }
                 }
             context.contentResolver.registerContentObserver(
-                Settings.Global.getUriFor(ADB_WIFI_ENABLED),
+                Settings.Global.getUriFor(HotspotHelper.ADB_WIFI_ENABLED),
                 false,
                 observer,
             )
@@ -407,13 +405,9 @@ object SettingsHook {
         context: Context,
         pref: Any,
     ) {
-        val on = isAdbWifiEnabled(context) && HotspotHelper.isHotspotActive(context)
+        val on = HotspotHelper.isAdbWifiEnabled(context) && HotspotHelper.isHotspotActive(context)
         XposedHelpers.callMethod(pref, "setChecked", on)
         XposedHelpers.callMethod(pref, "setSummary", getWirelessDebuggingSummary(context, on))
-    }
-
-    private fun isAdbWifiEnabled(context: Context): Boolean {
-        return Settings.Global.getInt(context.contentResolver, ADB_WIFI_ENABLED, 0) == 1
     }
 
     private fun getWirelessDebuggingSummary(
@@ -428,23 +422,7 @@ object SettingsHook {
             HotspotHelper.getHotspotIpAddress(context)
                 ?: HotspotHelper.getAnyWlanIp()
                 ?: return ""
-        val port = getAdbWirelessPort()
+        val port = HotspotHelper.getAdbWirelessPort()
         return if (port > 0) "$ip:$port" else ip
-    }
-
-    private fun getAdbWirelessPort(): Int {
-        return try {
-            val serviceManagerClass = Class.forName("android.os.ServiceManager")
-            val binder =
-                serviceManagerClass.getMethod("getService", String::class.java)
-                    .invoke(null, "adb")
-            val iAdbManagerStub = Class.forName("android.debug.IAdbManager\$Stub")
-            val adbService =
-                iAdbManagerStub.getMethod("asInterface", android.os.IBinder::class.java)
-                    .invoke(null, binder)
-            adbService.javaClass.getMethod("getAdbWirelessPort").invoke(adbService) as Int
-        } catch (_: Throwable) {
-            -1
-        }
     }
 }
