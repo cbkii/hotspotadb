@@ -1,5 +1,3 @@
-<img src="screenshot.png" align="right" width="300">
-
 # Hotspot Wireless Debugging
 
 LSPosed module that allows Wireless Debugging (ADB over Wi-Fi / TLS pairing) to work over
