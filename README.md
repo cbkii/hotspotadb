@@ -1,164 +1,102 @@
-<img src="screenshot.png" align="right" width="300">
+<div align="center">
+  <img src="screenshot.png" alt="Hotspot Wireless Debugging screen" width="420" />
 
 # Hotspot Wireless Debugging
 
-libxposed API 101 module that allows Wireless Debugging (ADB over Wi-Fi / TLS pairing) to work over
-Wi-Fi Hotspot on Android 15 and Android 16.
+Use Android Wireless Debugging (ADB over Wi‑Fi with pairing/TLS) while your phone is the hotspot host.
+</div>
 
-Android 11+ only enables Wireless Debugging when the device is connected to Wi-Fi as a client.
-This module hooks the Settings app and system framework to bypass that restriction, so hotspot
-guests can connect via ADB while the device acts as a SoftAP / hotspot.
+## What this module does
+
+Android normally expects the phone to be connected to Wi‑Fi as a client before Wireless Debugging can stay enabled.
+
+This module changes that behavior so Wireless Debugging can stay available when your phone is running a hotspot (SoftAP).
+
+## Who this is for
+
+- You tether other devices to your phone hotspot
+- You want native Wireless Debugging (pair + connect), not plain `adb tcpip`
+- You use a rooted phone with an Xposed-compatible framework
+
+## Compatibility (current baseline)
+
+- Android: **15 supported**
+- Android: **16 expected to work** (framework-side branch drift still possible)
+- Module type: **legacy XposedBridge module**
+- Scopes required: `android` and `com.android.settings`
 
 ## Requirements
 
-| Item | Requirement |
-|------|-------------|
-| Android | **16** (experimental / expected to work — on-device validation pending); Android 15 also supported |
-| Framework | **Vector v2.0** (or other modern API 101-compatible runtime) |
-| Xposed API | Modern libxposed **API 101** — legacy XposedBridge not supported |
+- Rooted device
+- Zygisk-enabled environment (Magisk or KernelSU setup)
+- Compatible Xposed runtime
 
-> **Note**: This module targets the modern libxposed API 101.  It will **not** load on older
-> frameworks that only support the legacy `de.robv.android.xposed` API.  You need a current
-> Vector-era API 101 runtime.
+## Install
 
-### Tested configurations
-
-| Device | Android | ROM | Zygisk | Xposed |
-|--------|---------|-----|--------|--------|
-| enchilada | 15 | LineageOS 22.2 | Magisk 30.7 or NeoZygisk 2.3 | LSPosed 1.9.2 or Vector 2.0 |
-| tucana | 16 | LineageOS 23.2 | Magisk 30.7 | Vector 2.0 |
-
-If this module works (or not) on your device/ROM, please [open an issue](https://github.com/cbkii/hotspotadb/issues) with details!
-
-## Installation
-
-Grab the latest signed APK from [GitHub Releases](https://github.com/cbkii/hotspotadb/releases), or [build from source](#building-from-source).
-
-1. Install the APK
-2. Enable the module in your API-101-compatible framework for both scopes:
+1. Download the latest APK from [Releases](https://github.com/cbkii/hotspotadb/releases).
+2. Install the APK.
+3. Enable the module for both scopes:
+   - `android`
    - `com.android.settings`
-   - `android` (System Framework)
-3. Reboot
+4. Reboot.
 
-## Usage
+## Use
 
-1. Enable Wi-Fi Hotspot
-2. Use the Wireless Debugging toggle on the hotspot settings screen, or go to
-   Developer Options > Wireless Debugging
-3. Pair your client device: `adb pair <ip>:<pairing_port> <pairing_code>`
-4. Connect: `adb connect <ip>:<port>`
+1. Turn on hotspot.
+2. Open hotspot settings or Developer options and enable Wireless Debugging.
+3. Pair from client:
+   - `adb pair <ip>:<pairing_port> <pairing_code>`
+4. Connect:
+   - `adb connect <ip>:<port>`
 
-On first use, Android prompts to trust a network matching your hotspot name.  Renaming the
-hotspot will reset this trust.  The MAC address used in the synthetic `AdbConnectionInfo` is
-hardcoded (`02:00:00:00:00:00`) because Android randomises the hotspot MAC on each enable, which
-would reset trust every time.
+## Troubleshooting (quick)
 
-## Architecture
+Check logs:
 
-The module has two hook domains:
-
-### `com.android.settings` scope
-- `AdbWirelessDebuggingPreferenceController.isWifiConnected(Context)` (Android 16) /
-  `WirelessDebuggingPreferenceController.isWifiConnected(Context)` (Android 15) — returns `true`
-  when hotspot is active, so the Wireless Debugging UI stays usable
-- `AdbIpAddressPreferenceController.getIpv4Address()` — returns the hotspot AP IP instead of
-  the station Wi-Fi IP when hotspot is active
-- `WifiTetherSettings.onStart()` — injects a Wireless Debugging toggle directly into the
-  hotspot settings screen; tapping it opens `AdbWirelessDebuggingFragment` (Android 16) or
-  `WirelessDebuggingFragment` (Android 15)
-
-### `android` scope (system_server)
-- `AdbDebuggingHandler.getCurrentWifiApInfo()` — synthesises an `AdbConnectionInfo` when
-  hotspot is active but no station Wi-Fi is present
-- `AdbWifiNetworkMonitor.onLost()` / `onCapabilitiesChanged()` (Android 16 primary path) —
-  suppresses framework-driven `NetworkCallback` events that would disable wireless debugging
-  when the device is no longer a Wi-Fi client
-- `AdbBroadcastReceiver.onReceive()` (Android 16 secondary path) — suppresses
-  `WIFI_STATE_CHANGED` / `NETWORK_STATE_CHANGED` broadcasts on the path active when
-  `allowAdbWifiReconnect` is disabled
-- Anonymous inner `BroadcastReceiver.onReceive()` scan (Android 15 fallback) — same broadcast
-  suppression for Android 15 which uses anonymous inner classes
-
-### Android 16 compatibility
-
-Android 16 branch compatibility is based on public AOSP source plus branch-candidate probing:
-
-- **AdbConnectionInfo**: `com.android.server.adb.AdbConnectionInfo` (top-level, package-private
-  `(String bssid, String ssid)` constructor).  Falls back to nested
-  `AdbDebuggingManager$AdbConnectionInfo` for Android 15.
-- **Network monitor path A** (default on many branches, `allowAdbWifiReconnect` enabled): `AdbWifiNetworkMonitor`
-  is a `ConnectivityManager.NetworkCallback`.  `onLost()` and `onCapabilitiesChanged()` are
-  hooked to suppress framework-driven ADB Wi-Fi teardown while hotspot is active.
-- **Network monitor path B** (`allowAdbWifiReconnect` disabled): `AdbBroadcastReceiver`
-  handles `WIFI_STATE_CHANGED` / `NETWORK_STATE_CHANGED` broadcasts.  Hooked via `onReceive()`.
-- Both paths are hooked whenever the classes are present; the runtime choice between them is
-  made by `AdbDebuggingManager` at boot and cannot be predicted at hook installation time.
-- **Android 15 fallback**: if neither named class is found, anonymous inner `BroadcastReceiver`
-  classes of `AdbDebuggingHandler` are scanned and hooked.
-
-User-initiated disables (Developer Options toggle, hotspot settings toggle) write
-`Settings.Global.ADB_WIFI_ENABLED` directly and are **not** routed through the network monitor
-or `AdbBroadcastReceiver`, so the hooks above do not interfere with user intent.
-
-## Building from source
-
-Requires JDK 21 and Android SDK with API 36.
-
-```shell
-make build     # build debug APK
-make install   # install via Gradle
-make clean     # clean build artifacts
-```
-
-## Known limitations / runtime verification needed
-
-- `AdbDebuggingHandler.getCurrentWifiApInfo()` is source-backed and hook-targeted, but on-device
-  stock Pixel validation is still required for exact branch/field layout confirmation.
-- `AdbWifiNetworkMonitor.onLost()` and `onCapabilitiesChanged()` override resolution requires
-  on-device validation (method deoptimize + hook chain); if either is not overridden in the
-  concrete class, the hook will not be installed but a WARN log entry will appear.
-- Settings UI class paths (`WirelessDebuggingPreferenceController`, `WifiTetherSettings`) are
-  confirmed standard AOSP names.  On the target device (`SettingsGoogle`,
-  `codePath=/system_ext/priv-app/SettingsGoogle`), `pm path` is unreliable; use
-  `dumpsys package com.android.settings` to confirm the codePath.
-- `WIFI_AP_STATE_ENABLED = 13` is confirmed for Android 15/16.  If a device OEM changes this
-  constant, `isHotspotActive()` would return false silently; the WARN log from
-  `getWifiApState()` reflection would surface this.
-
-## Troubleshooting
-
-To verify the module loaded correctly, filter LSPosed / logcat for `HotspotAdb`:
-
-```shell
+```bash
 adb logcat -s HotspotAdb
 ```
 
-Expected log entries after boot:
-- `module loaded in system_server` (framework version line follows)
-- `hooked AdbDebuggingHandler.getCurrentWifiApInfo`
-- `getCurrentWifiApInfo returnType=...`
-- `AdbConnectionInfo constructor selected: ...`
-- `found AdbWifiNetworkMonitor; installing Android 16 NetworkCallback hooks` (Android 16)
-- `hooked AdbWifiNetworkMonitor.onLost`
-- `hooked AdbWifiNetworkMonitor.onCapabilitiesChanged`
-- `hooked BroadcastReceiver.onReceive via AdbBroadcastReceiver path` (Android 16)
-- `module loaded in com.android.settings`
-- `hooked AdbWirelessDebuggingPreferenceController.isWifiConnected` (Android 16) or `hooked WirelessDebuggingPreferenceController.isWifiConnected` (Android 15)
-- `hooked AdbIpAddressPreferenceController.getIpv4Address`
-- `hooked WifiTetherSettings.onStart`
-- `hooked WifiTetherSettings.onStop for listener cleanup`
+If it fails, include these in your bug report:
+- device model
+- Android version
+- ROM
+- root + framework versions
+- relevant `HotspotAdb` logs
 
-When hotspot is active and wireless debugging starts:
-- `getCurrentWifiApInfo → synthetic (bssid=02:00:00:00:00:00 ssid=...)`
-- `blocked AdbWifiNetworkMonitor.onLost (hotspot active; framework-driven disable suppressed)`
-- `hotspot IP via wlan1: 10.x.x.x` (or similar interface/IP)
+## Advanced technical notes
 
-## Other solutions
+### Hook domains
 
-[Magisk-WiFiADB](https://github.com/mrh929/magisk-wifiadb) — Magisk module, enables legacy
-`adb tcpip` on boot.  Simpler (just Magisk, any Android), but unencrypted and not
-hotspot-aware.  This module hooks native Wireless Debugging (TLS, pairing) with Settings UI,
-but needs LSPosed and Android 15+.
+1. **Settings process** (`com.android.settings`)
+   - keeps UI enabled in hotspot mode
+   - shows hotspot-side IP for ADB
+   - injects hotspot settings entry behavior
+2. **Framework process** (`android` / `system_server`)
+   - supplies hotspot connection info to ADB internals
+   - blocks framework network-change paths that otherwise disable hotspot wireless debugging
+
+### Behavior details
+
+- Trust identity uses a synthetic stable BSSID to avoid trust reset on each hotspot cycle.
+- Hotspot detection and IP discovery are heuristic by design.
+
+## Build from source
+
+Requires JDK 21 and Android SDK API 36.
+
+```bash
+./gradlew ktlintCheck detekt assembleDebug
+```
+
+## Acknowledgements
+
+This project started from the original work by **Dr. Serasprout** and contributors.
+
+- Original upstream project: [droserasprout/io.drsr.hotspotadb](https://github.com/droserasprout/io.drsr.hotspotadb)
+- Upstream contributors: [Contributors graph](https://github.com/droserasprout/io.drsr.hotspotadb/graphs/contributors)
+
+Thank you to the upstream maintainers and contributors for the foundation this standalone repository builds on.
 
 ## License
 
