@@ -13,14 +13,15 @@ android {
     namespace = "io.drsr.hotspotadb"
     // API 36 = Android 16
     compileSdk = 36
+    buildToolsVersion = "35.0.0"
 
     defaultConfig {
         applicationId = "io.drsr.hotspotadb"
         // minSdk stays at 35 (Android 15): the module targets Android 15+ only
         minSdk = 35
         targetSdk = 36
-        versionCode = 8
-        versionName = "2.1.6"
+        versionCode = 9
+        versionName = "2.1.8"
     }
 
     signingConfigs {

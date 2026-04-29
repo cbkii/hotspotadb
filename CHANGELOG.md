@@ -5,11 +5,55 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [2.1.2] - 2026-04-12
+## [2.1.8] - 2026-04-29
+
+### Fixed
+
+- `getCurrentWifiApInfo()` synthetic `AdbConnectionInfo` constructor selection is now tied to
+  the hooked method return type, with compatibility checks before fallback class usage.
+- Added explicit return-type and constructor-class logging so incompatible branch layouts fail
+  soft with diagnosable logs instead of returning the wrong object type.
 
 ### Changed
 
-- Release 2.1.2.
+- CI now explicitly installs `platform-tools`, `platforms;android-36`, and
+  `build-tools;35.0.0` before Gradle tasks.
+- Added `scripts/validate-module.sh` and wired it into CI to verify module metadata and guard
+  against accidental broad `Settings.Global.putInt` interception.
+- Version bumped to `2.1.8` / `versionCode=9`.
+
+## [2.1.7] - 2026-04-29
+
+### Fixed
+
+- Corrected context-field literal escaping for reflective `this$0` lookup in framework handler
+  and monitor context extraction.
+- Added framework runtime decision logs for `getCurrentWifiApInfo()` original non-null/null
+  branch selection before synthetic fallback.
+
+### Changed
+
+- Documentation wording now treats Android 16 monitor/receiver paths as branch candidates and
+  source-backed expectations rather than unconditional stock-runtime confirmation.
+
+## [2.1.6] - 2026-04-29
+
+### Fixed
+
+- Hardened Android 16 hotspot-only Wireless Debugging enablement path in both `SettingsHook` and
+  `FrameworkHook` with deterministic class/method probing and stronger branch diagnostics.
+- `AdbDebuggingHandler.getCurrentWifiApInfo()` compatibility path now logs context extraction and
+  hotspot gating failures explicitly before synthetic `AdbConnectionInfo` creation.
+- Teardown suppression probing now keeps named monitor/receiver hooks and anonymous
+  `AdbDebuggingHandler$N` receiver fallback scans independent, so Android branch drift is easier
+  to diagnose from logs.
+
+### Changed
+
+- Added centralized `ReflectionCompat` helpers for ordered class, method, constructor, and field
+  probing with install-time signature logs.
+- Improved hotspot/AP diagnostics in `HotspotHelper` including raw SoftAP state output and
+  interface/IP rejection reasons when no AP IPv4 can be selected.
 
 ## [2.1.1] - 2026-04-12
 
@@ -113,8 +157,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Initial release.
 
+[2.1.8]: https://github.com/cbkii/hotspotadb/compare/2.1.7...2.1.8
+[2.1.7]: https://github.com/cbkii/hotspotadb/compare/2.1.6...2.1.7
+[2.1.6]: https://github.com/cbkii/hotspotadb/compare/2.1.1...2.1.6
+[2.1.1]: https://github.com/cbkii/hotspotadb/compare/2.1.0...2.1.1
 [2.1.0]: https://github.com/cbkii/hotspotadb/compare/2.0.0...2.1.0
 [2.0.0]: https://github.com/cbkii/hotspotadb/compare/1.0.1...2.0.0
 [1.0.1]: https://github.com/cbkii/hotspotadb/compare/1.0.0...1.0.1
 [1.0.0]: https://github.com/cbkii/hotspotadb/releases/tag/1.0.0
-
