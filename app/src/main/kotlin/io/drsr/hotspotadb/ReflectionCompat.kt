@@ -9,7 +9,12 @@ import java.lang.reflect.Method
 object ReflectionCompat {
     private const val TAG = HotspotAdbModule.TAG
 
-    fun findFirstClass(classLoader: ClassLoader, module: XposedModule, label: String, vararg names: String): Class<*>? {
+    fun findFirstClass(
+        classLoader: ClassLoader,
+        module: XposedModule,
+        label: String,
+        vararg names: String,
+    ): Class<*>? {
         names.forEachIndexed { index, name ->
             val clazz = tryFindClass(name, classLoader)
             if (clazz != null) {
@@ -47,7 +52,12 @@ object ReflectionCompat {
         return null
     }
 
-    fun findConstructor(clazz: Class<*>, module: XposedModule, label: String, vararg params: Class<*>): Constructor<*>? {
+    fun findConstructor(
+        clazz: Class<*>,
+        module: XposedModule,
+        label: String,
+        vararg params: Class<*>,
+    ): Constructor<*>? {
         val ctor = runCatching { clazz.getDeclaredConstructor(*params).also { it.isAccessible = true } }.getOrNull()
         if (ctor != null) {
             module.log(Log.INFO, TAG, "$label constructor selected: ${ctor.toGenericString()}")
@@ -57,7 +67,10 @@ object ReflectionCompat {
         return null
     }
 
-    fun getFieldValueByName(obj: Any, name: String): Any? {
+    fun getFieldValueByName(
+        obj: Any,
+        name: String,
+    ): Any? {
         var cls: Class<*>? = obj.javaClass
         while (cls != null && cls != Any::class.java) {
             val field = runCatching { cls.getDeclaredField(name).also { it.isAccessible = true } }.getOrNull()
@@ -67,7 +80,10 @@ object ReflectionCompat {
         return null
     }
 
-    fun getFieldValueByType(obj: Any, typeName: String): Any? {
+    fun getFieldValueByType(
+        obj: Any,
+        typeName: String,
+    ): Any? {
         var cls: Class<*>? = obj.javaClass
         while (cls != null && cls != Any::class.java) {
             val field = cls.declaredFields.firstOrNull { it.type.name == typeName }?.also { it.isAccessible = true }
@@ -77,11 +93,27 @@ object ReflectionCompat {
         return null
     }
 
-    fun getFieldByNamesOrTypes(obj: Any, names: List<String>, typeNames: List<String>): Field? {
+    fun getFieldByNamesOrTypes(
+        obj: Any,
+        names: List<String>,
+        typeNames: List<String>,
+    ): Field? {
+        // Probe in caller-specified order: names take priority over type names.
+        // Within each superclass level, try every requested name before any type name so the
+        // lookup is deterministic regardless of getDeclaredFields() ordering.
         var cls: Class<*>? = obj.javaClass
         while (cls != null && cls != Any::class.java) {
-            cls.declaredFields.forEach { field ->
-                if (field.name in names || field.type.name in typeNames) {
+            val declaredFields = cls.declaredFields
+            for (targetName in names) {
+                val field = declaredFields.firstOrNull { it.name == targetName }
+                if (field != null) {
+                    field.isAccessible = true
+                    return field
+                }
+            }
+            for (targetType in typeNames) {
+                val field = declaredFields.firstOrNull { it.type.name == targetType }
+                if (field != null) {
                     field.isAccessible = true
                     return field
                 }

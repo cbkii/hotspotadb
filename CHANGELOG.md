@@ -45,7 +45,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `AdbDebuggingHandler.getCurrentWifiApInfo()` compatibility path now logs context extraction and
   hotspot gating failures explicitly before synthetic `AdbConnectionInfo` creation.
 - Teardown suppression probing now keeps named monitor/receiver hooks and anonymous
-  `AdbDebuggingHandler$N` receiver fallback scans independent so Android branch drift is easier
+  `AdbDebuggingHandler$N` receiver fallback scans independent, so Android branch drift is easier
   to diagnose from logs.
 
 ### Changed
@@ -157,6 +157,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Initial release.
 
+[2.1.8]: https://github.com/cbkii/hotspotadb/compare/2.1.7...2.1.8
+[2.1.7]: https://github.com/cbkii/hotspotadb/compare/2.1.6...2.1.7
+[2.1.6]: https://github.com/cbkii/hotspotadb/compare/2.1.1...2.1.6
+[2.1.1]: https://github.com/cbkii/hotspotadb/compare/2.1.0...2.1.1
 [2.1.0]: https://github.com/cbkii/hotspotadb/compare/2.0.0...2.1.0
 [2.0.0]: https://github.com/cbkii/hotspotadb/compare/1.0.1...2.0.0
 [1.0.1]: https://github.com/cbkii/hotspotadb/compare/1.0.0...1.0.1

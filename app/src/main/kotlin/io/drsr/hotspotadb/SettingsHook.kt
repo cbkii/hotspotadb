@@ -149,8 +149,14 @@ object SettingsHook {
             "com.android.settings.wifi.tether.WifiTetherSettings",
         ) ?: return
 
-        // onStart: inject preference (if not already present) and register observers.
-        val onStart = ReflectionCompat.findMethod(clazz, module, "Settings tether fragment", "onStart", includeInherited = true) ?: return
+        // Resolve both lifecycle methods before installing any hooks so we never end up
+        // with the registration path (onStart) wired but the cleanup path (onStop) absent,
+        // which would cause duplicate observer/receiver registrations on re-entry.
+        val onStart =
+            ReflectionCompat.findMethod(clazz, module, "Settings tether fragment", "onStart", includeInherited = true) ?: return
+        val onStop =
+            ReflectionCompat.findMethod(clazz, module, "Settings tether fragment", "onStop", includeInherited = true) ?: return
+
         module.hook(onStart).intercept { chain ->
             chain.proceed()
             try {
@@ -163,7 +169,6 @@ object SettingsHook {
         module.log(Log.INFO, TAG, "hooked WifiTetherSettings.onStart")
 
         // onStop: unregister observers and cancel pending handler callbacks.
-        val onStop = ReflectionCompat.findMethod(clazz, module, "Settings tether fragment", "onStop", includeInherited = true) ?: return
         module.hook(onStop).intercept { chain ->
             try {
                 cleanupFragment(chain.getThisObject()!!, module)

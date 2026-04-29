@@ -158,7 +158,7 @@ object FrameworkHook {
             )
         for (name in candidates) {
             val clazz = ReflectionCompat.findFirstClass(classLoader, module, "AdbConnectionInfo", name) ?: continue
-            if (!(expectedReturnType.isAssignableFrom(clazz) || clazz.isAssignableFrom(expectedReturnType))) {
+            if (!expectedReturnType.isAssignableFrom(clazz)) {
                 module.log(
                     Log.DEBUG,
                     TAG,
@@ -418,7 +418,11 @@ object FrameworkHook {
                 ReflectionCompat.getFieldValueByName(handler, "this\$0")
                     ?: ReflectionCompat.getFieldValueByName(handler, "mAdbDebuggingManager")
                     ?: ReflectionCompat.getFieldValueByType(handler, "com.android.server.adb.AdbDebuggingManager")
-                    ?: ReflectionCompat.getFieldByNamesOrTypes(handler, listOf("mManager"), listOf("com.android.server.adb.AdbDebuggingManager"))?.get(handler)
+                    ?: ReflectionCompat.getFieldByNamesOrTypes(
+                        handler,
+                        listOf("mManager"),
+                        listOf("com.android.server.adb.AdbDebuggingManager"),
+                    )?.get(handler)
             (outer?.let { ReflectionCompat.getFieldValueByName(it, "mContext") } as? Context)?.also {
                 module.log(Log.DEBUG, TAG, "context extraction: manager.mContext via ${outer?.javaClass?.name}")
                 return it
@@ -461,7 +465,6 @@ object FrameworkHook {
         } catch (_: Throwable) {
             "HotspotAP"
         }
-
 
     private const val TAG = HotspotAdbModule.TAG
 }

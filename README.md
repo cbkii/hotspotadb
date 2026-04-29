@@ -13,7 +13,7 @@ guests can connect via ADB while the device acts as a SoftAP / hotspot.
 
 | Item | Requirement |
 |------|-------------|
-| Android | **16** (primary target, Pixel 9a / `tegu`); Android 15 also supported |
+| Android | **16** (experimental / expected to work — on-device validation pending); Android 15 also supported |
 | Framework | **Vector v2.0** (or other modern API 101-compatible runtime) |
 | Xposed API | Modern libxposed **API 101** — legacy XposedBridge not supported |
 

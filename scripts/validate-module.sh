@@ -6,7 +6,14 @@ grep -R "Settings.Global.putInt" -n app/src/main | grep -v "SettingsHook.kt" && 
   exit 1
 } || true
 
-APK="$(ls app/build/outputs/apk/debug/*.apk | head -1)"
+shopt -s nullglob
+APK_LIST=(app/build/outputs/apk/debug/*.apk)
+shopt -u nullglob
+if [[ ${#APK_LIST[@]} -ne 1 ]]; then
+  echo "Expected exactly 1 debug APK, found ${#APK_LIST[@]}: ${APK_LIST[*]}" >&2
+  exit 1
+fi
+APK="${APK_LIST[0]}"
 for f in META-INF/xposed/module.prop META-INF/xposed/java_init.list META-INF/xposed/scope.list; do
   unzip -p "$APK" "$f" >/dev/null
   echo "OK: $f"

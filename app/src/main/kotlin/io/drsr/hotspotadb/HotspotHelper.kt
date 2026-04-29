@@ -49,12 +49,17 @@ object HotspotHelper {
                     rejected += "${iface.name}:loopback/down"
                     continue
                 }
-                if (iface.name.startsWith("rmnet") || iface.name.startsWith("ccmni") || iface.name.startsWith("tun") || iface.name.startsWith("clat")) {
+                // Explicit denylist for mobile-data, VPN, and CLAT tunnel interfaces.
+                // We do not maintain an allowlist of AP interface name prefixes because OEMs
+                // use non-standard names (e.g. "softap*", "wigig*"). Any interface that
+                // survives the denylist and has an IPv4 address is a valid SoftAP candidate.
+                if (
+                    iface.name.startsWith("rmnet") ||
+                    iface.name.startsWith("ccmni") ||
+                    iface.name.startsWith("tun") ||
+                    iface.name.startsWith("clat")
+                ) {
                     rejected += "${iface.name}:cell/vpn/clat"
-                    continue
-                }
-                if (!iface.name.startsWith("wlan") && !iface.name.startsWith("ap") && !iface.name.startsWith("swlan")) {
-                    rejected += "${iface.name}:pattern"
                     continue
                 }
                 for (addr in iface.inetAddresses) {
