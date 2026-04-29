@@ -20,7 +20,7 @@ android {
         // minSdk stays at 35 (Android 15): the module targets Android 15+ only
         minSdk = 35
         targetSdk = 36
-        versionCode = 9
+        versionCode = 10
         versionName = "2.1.8"
     }
 
