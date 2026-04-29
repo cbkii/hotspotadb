@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-grep -R "Settings.Global.putInt" -n app/src/main | grep -v "SettingsHook.kt" && {
+grep -R "Settings.Global.putInt" -n app/src/main | grep -v "SettingsHook.kt" | grep -Ev ":[0-9]+:[[:space:]]*(//|\*)" && {
   echo "Unexpected Settings.Global.putInt usage outside injected toggle" >&2
   exit 1
 } || true

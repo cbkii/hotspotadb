@@ -66,21 +66,23 @@ object SettingsHook {
         module: XposedModule,
     ) {
         // Android 16+: AdbWirelessDebuggingPreferenceController; Android 15: WirelessDebuggingPreferenceController
-        val clazz = ReflectionCompat.findFirstClass(
-            classLoader,
-            module,
-            "Settings Wi-Fi gate",
-            "com.android.settings.development.AdbWirelessDebuggingPreferenceController",
-            "com.android.settings.development.WirelessDebuggingPreferenceController",
-        ) ?: return
-        val method = ReflectionCompat.findMethod(
-            clazz,
-            module,
-            "Settings Wi-Fi gate",
-            "isWifiConnected",
-            includeInherited = true,
-            Context::class.java,
-        ) ?: return
+        val clazz =
+            ReflectionCompat.findFirstClass(
+                classLoader,
+                module,
+                "Settings Wi-Fi gate",
+                "com.android.settings.development.AdbWirelessDebuggingPreferenceController",
+                "com.android.settings.development.WirelessDebuggingPreferenceController",
+            ) ?: return
+        val method =
+            ReflectionCompat.findMethod(
+                clazz,
+                module,
+                "Settings Wi-Fi gate",
+                "isWifiConnected",
+                includeInherited = true,
+                Context::class.java,
+            ) ?: return
 
         module.hook(method).intercept { chain ->
             val result = chain.proceed()
@@ -109,19 +111,21 @@ object SettingsHook {
         classLoader: ClassLoader,
         module: XposedModule,
     ) {
-        val clazz = ReflectionCompat.findFirstClass(
-            classLoader,
-            module,
-            "Settings IPv4",
-            "com.android.settings.development.AdbIpAddressPreferenceController",
-        ) ?: return
-        val method = ReflectionCompat.findMethod(
-            clazz,
-            module,
-            "Settings IPv4",
-            "getIpv4Address",
-            includeInherited = true,
-        ) ?: return
+        val clazz =
+            ReflectionCompat.findFirstClass(
+                classLoader,
+                module,
+                "Settings IPv4",
+                "com.android.settings.development.AdbIpAddressPreferenceController",
+            ) ?: return
+        val method =
+            ReflectionCompat.findMethod(
+                clazz,
+                module,
+                "Settings IPv4",
+                "getIpv4Address",
+                includeInherited = true,
+            ) ?: return
 
         module.hook(method).intercept { chain ->
             val thisObj = chain.getThisObject() ?: return@intercept chain.proceed()
@@ -142,12 +146,13 @@ object SettingsHook {
         classLoader: ClassLoader,
         module: XposedModule,
     ) {
-        val clazz = ReflectionCompat.findFirstClass(
-            classLoader,
-            module,
-            "Settings tether fragment",
-            "com.android.settings.wifi.tether.WifiTetherSettings",
-        ) ?: return
+        val clazz =
+            ReflectionCompat.findFirstClass(
+                classLoader,
+                module,
+                "Settings tether fragment",
+                "com.android.settings.wifi.tether.WifiTetherSettings",
+            ) ?: return
 
         // Resolve both lifecycle methods before installing any hooks so we never end up
         // with the registration path (onStart) wired but the cleanup path (onStop) absent,

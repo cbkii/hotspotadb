@@ -158,7 +158,7 @@ object FrameworkHook {
             )
         for (name in candidates) {
             val clazz = ReflectionCompat.findFirstClass(classLoader, module, "AdbConnectionInfo", name) ?: continue
-            if (!expectedReturnType.isAssignableFrom(clazz)) {
+            if (!(expectedReturnType.isAssignableFrom(clazz) || clazz.isAssignableFrom(expectedReturnType))) {
                 module.log(
                     Log.DEBUG,
                     TAG,

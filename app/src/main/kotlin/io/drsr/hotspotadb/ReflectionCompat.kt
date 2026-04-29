@@ -123,7 +123,10 @@ object ReflectionCompat {
         return null
     }
 
-    private fun tryFindClass(name: String, classLoader: ClassLoader): Class<*>? =
+    private fun tryFindClass(
+        name: String,
+        classLoader: ClassLoader,
+    ): Class<*>? =
         try {
             Class.forName(name, false, classLoader)
         } catch (_: ClassNotFoundException) {
