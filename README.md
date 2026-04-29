@@ -2,7 +2,7 @@
 
 # Hotspot Wireless Debugging
 
-LSPosed module that allows Wireless Debugging (ADB over Wi-Fi / TLS pairing) to work over
+libxposed API 101 module that allows Wireless Debugging (ADB over Wi-Fi / TLS pairing) to work over
 Wi-Fi Hotspot on Android 15 and Android 16.
 
 Android 11+ only enables Wireless Debugging when the device is connected to Wi-Fi as a client.
@@ -14,12 +14,12 @@ guests can connect via ADB while the device acts as a SoftAP / hotspot.
 | Item | Requirement |
 |------|-------------|
 | Android | **16** (primary target, Pixel 9a / `tegu`); Android 15 also supported |
-| Framework | **LSPosed** (Vector or other modern API 101-compatible fork) |
+| Framework | **Vector v2.0** (or other modern API 101-compatible runtime) |
 | Xposed API | Modern libxposed **API 101** — legacy XposedBridge not supported |
 
 > **Note**: This module targets the modern libxposed API 101.  It will **not** load on older
 > frameworks that only support the legacy `de.robv.android.xposed` API.  You need a current
-> LSPosed build (Vector era or equivalent).
+> Vector-era API 101 runtime.
 
 ### Tested configurations
 
@@ -35,7 +35,7 @@ If this module works (or not) on your device/ROM, please [open an issue](https:/
 Grab the latest signed APK from [GitHub Releases](https://github.com/cbkii/hotspotadb/releases), or [build from source](#building-from-source).
 
 1. Install the APK
-2. Enable the module in LSPosed for both scopes:
+2. Enable the module in your API-101-compatible framework for both scopes:
    - `com.android.settings`
    - `android` (System Framework)
 3. Reboot
@@ -81,12 +81,12 @@ The module has two hook domains:
 
 ### Android 16 compatibility
 
-All Android 16 QPR2 class names have been confirmed against AOSP source:
+Android 16 branch compatibility is based on public AOSP source plus branch-candidate probing:
 
 - **AdbConnectionInfo**: `com.android.server.adb.AdbConnectionInfo` (top-level, package-private
   `(String bssid, String ssid)` constructor).  Falls back to nested
   `AdbDebuggingManager$AdbConnectionInfo` for Android 15.
-- **Network monitor path A** (default, `allowAdbWifiReconnect` enabled): `AdbWifiNetworkMonitor`
+- **Network monitor path A** (default on many branches, `allowAdbWifiReconnect` enabled): `AdbWifiNetworkMonitor`
   is a `ConnectivityManager.NetworkCallback`.  `onLost()` and `onCapabilitiesChanged()` are
   hooked to suppress framework-driven ADB Wi-Fi teardown while hotspot is active.
 - **Network monitor path B** (`allowAdbWifiReconnect` disabled): `AdbBroadcastReceiver`
@@ -112,8 +112,8 @@ make clean     # clean build artifacts
 
 ## Known limitations / runtime verification needed
 
-- `AdbDebuggingHandler.getCurrentWifiApInfo()` is confirmed in AOSP Android 16 QPR2 source.
-  On-device validation on build `CP1A.260305.018` is still pending.
+- `AdbDebuggingHandler.getCurrentWifiApInfo()` is source-backed and hook-targeted, but on-device
+  stock Pixel validation is still required for exact branch/field layout confirmation.
 - `AdbWifiNetworkMonitor.onLost()` and `onCapabilitiesChanged()` override resolution requires
   on-device validation (method deoptimize + hook chain); if either is not overridden in the
   concrete class, the hook will not be installed but a WARN log entry will appear.
@@ -136,7 +136,8 @@ adb logcat -s HotspotAdb
 Expected log entries after boot:
 - `module loaded in system_server` (framework version line follows)
 - `hooked AdbDebuggingHandler.getCurrentWifiApInfo`
-- `resolved AdbConnectionInfo ctor: com.android.server.adb.AdbConnectionInfo`
+- `getCurrentWifiApInfo returnType=...`
+- `AdbConnectionInfo constructor selected: ...`
 - `found AdbWifiNetworkMonitor; installing Android 16 NetworkCallback hooks` (Android 16)
 - `hooked AdbWifiNetworkMonitor.onLost`
 - `hooked AdbWifiNetworkMonitor.onCapabilitiesChanged`

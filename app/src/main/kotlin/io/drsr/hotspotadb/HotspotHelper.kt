@@ -15,7 +15,12 @@ object HotspotHelper {
             val wifiManager = context.getSystemService(Context.WIFI_SERVICE) as WifiManager
             val method = wifiManager.javaClass.getMethod("getWifiApState")
             val state = method.invoke(wifiManager) as Int
-            state == WIFI_AP_STATE_ENABLED
+            val active = state == WIFI_AP_STATE_ENABLED
+            Log.d(TAG, "HotspotAdb: hotspot state check method=getWifiApState state=$state expected=$WIFI_AP_STATE_ENABLED active=$active")
+            active
+        } catch (e: NoSuchMethodException) {
+            Log.w(TAG, "HotspotAdb: hotspot state check missing getWifiApState: $e")
+            false
         } catch (e: Exception) {
             Log.w(TAG, "HotspotAdb: failed to check hotspot state: $e")
             false
@@ -36,29 +41,38 @@ object HotspotHelper {
     private fun getApInterfaceIp(excludeIp: String? = null): String? {
         try {
             val interfaces = NetworkInterface.getNetworkInterfaces() ?: return null
+            val inspected = mutableListOf<String>()
+            val rejected = mutableListOf<String>()
             for (iface in interfaces) {
-                if (iface.isLoopback || !iface.isUp) continue
-                if (iface.name.startsWith("rmnet")) continue
-                if (!iface.name.startsWith("wlan") &&
-                    !iface.name.startsWith("ap") &&
-                    !iface.name.startsWith("swlan")
-                ) {
+                inspected += iface.name
+                if (iface.isLoopback || !iface.isUp) {
+                    rejected += "${iface.name}:loopback/down"
+                    continue
+                }
+                if (iface.name.startsWith("rmnet") || iface.name.startsWith("ccmni") || iface.name.startsWith("tun") || iface.name.startsWith("clat")) {
+                    rejected += "${iface.name}:cell/vpn/clat"
+                    continue
+                }
+                if (!iface.name.startsWith("wlan") && !iface.name.startsWith("ap") && !iface.name.startsWith("swlan")) {
+                    rejected += "${iface.name}:pattern"
                     continue
                 }
                 for (addr in iface.inetAddresses) {
                     if (addr is Inet4Address && !addr.isLoopbackAddress) {
                         val ip = addr.hostAddress ?: continue
                         if (ip == excludeIp) {
-                            Log.d(TAG, "$TAG: skipping ${iface.name} ($ip) — station Wi-Fi IP")
+                            rejected += "${iface.name}:station-ip($ip)"
                             continue
                         }
-                        Log.i(TAG, "$TAG: hotspot IP via ${iface.name}: $ip")
+                        Log.i(TAG, "HotspotAdb: selected hotspot interface=${iface.name} ip=$ip")
                         return ip
                     }
                 }
+                rejected += "${iface.name}:no-ipv4"
             }
+            Log.w(TAG, "HotspotAdb: no hotspot IPv4 found inspected=${inspected.joinToString()} rejected=${rejected.joinToString()}")
         } catch (e: Exception) {
-            Log.w(TAG, "$TAG: failed to get hotspot IP: $e")
+            Log.w(TAG, "HotspotAdb: failed to get hotspot IP: $e")
         }
         return null
     }

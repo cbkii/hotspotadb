@@ -23,11 +23,11 @@ import java.lang.reflect.Constructor
  *     AdbWifiNetworkMonitor is a ConnectivityManager.NetworkCallback.  Its onLost() and
  *     onCapabilitiesChanged() tear down wireless debugging when the device loses station Wi-Fi.
  *     We suppress those callbacks while hotspot is active.
- *     Confirmed in Android 16 QPR2 AOSP: com.android.server.adb.AdbWifiNetworkMonitor.
+ *     Candidate path on Android 16 branches: com.android.server.adb.AdbWifiNetworkMonitor.
  *
  *   Android 16 (allowAdbWifiReconnect disabled):
  *     AdbBroadcastReceiver handles WIFI_STATE_CHANGED / NETWORK_STATE_CHANGED broadcasts.
- *     Confirmed in Android 16 QPR2 AOSP: com.android.server.adb.AdbBroadcastReceiver.
+ *     Candidate path on Android 16 branches: com.android.server.adb.AdbBroadcastReceiver.
  *
  *   Android 15:
  *     Anonymous inner BroadcastReceiver classes inside AdbDebuggingHandler handle the same
@@ -41,7 +41,7 @@ import java.lang.reflect.Constructor
  * Settings.Global.ADB_WIFI_ENABLED directly and are NOT routed through AdbWifiNetworkMonitor
  * or AdbBroadcastReceiver.  Suppressing those classes does not interfere with user intent.
  *
- * AdbConnectionInfo resolution (Android 16 QPR2 AOSP confirmed):
+ * AdbConnectionInfo resolution (Android 16 branch candidates):
  *   Primary: com.android.server.adb.AdbConnectionInfo (top-level, package-private ctor)
  *   Fallback: com.android.server.adb.AdbDebuggingManager$AdbConnectionInfo (Android 15 nested)
  */
@@ -51,7 +51,7 @@ object FrameworkHook {
     // (Android randomises the real hotspot MAC on each enable cycle).
     private const val SYNTHETIC_BSSID = "02:00:00:00:00:00"
 
-    // Resolved once at install time; null if no suitable constructor was found.
+    // Resolved once at install time from the hooked getCurrentWifiApInfo() return type.
     private var connectionInfoCtor: Constructor<*>? = null
 
     fun install(
@@ -69,23 +69,23 @@ object FrameworkHook {
         module: XposedModule,
     ) {
         val handlerClass =
-            tryFindClass(
-                "com.android.server.adb.AdbDebuggingManager\$AdbDebuggingHandler",
+            ReflectionCompat.findFirstClass(
                 classLoader,
-            ) ?: run {
-                module.log(Log.WARN, TAG, "AdbDebuggingHandler not found; getCurrentWifiApInfo hook skipped")
-                return
-            }
+                module,
+                "Framework enablement handler",
+                "com.android.server.adb.AdbDebuggingManager$AdbDebuggingHandler",
+            ) ?: return
 
-        val method =
-            try {
-                handlerClass.getDeclaredMethod("getCurrentWifiApInfo").also { it.isAccessible = true }
-            } catch (e: NoSuchMethodException) {
-                module.log(Log.WARN, TAG, "getCurrentWifiApInfo not found in AdbDebuggingHandler: $e")
-                return
-            }
+        val method = ReflectionCompat.findMethod(
+            handlerClass,
+            module,
+            "Framework enablement",
+            "getCurrentWifiApInfo",
+            includeInherited = true,
+        ) ?: return
 
-        connectionInfoCtor = resolveConnectionInfoCtor(classLoader, module)
+        module.log(Log.INFO, TAG, "getCurrentWifiApInfo returnType=${method.returnType.name}")
+        connectionInfoCtor = resolveConnectionInfoCtor(classLoader, module, method.returnType)
 
         // Deoptimise: prevent the JIT from inlining callers (e.g. handleMessage) and
         // bypassing the hook.
@@ -93,14 +93,24 @@ object FrameworkHook {
 
         module.hook(method).intercept { chain ->
             val result = chain.proceed()
-            if (result != null) return@intercept result
+            if (result != null) {
+                module.log(Log.DEBUG, TAG, "getCurrentWifiApInfo originalResult=non-null decision=pass-through")
+                return@intercept result
+            }
+            module.log(Log.DEBUG, TAG, "getCurrentWifiApInfo originalResult=null entering synthetic branch")
 
-            val context = getContext(chain.getThisObject()) ?: return@intercept null
-            if (!HotspotHelper.isHotspotActive(context)) return@intercept null
+            val context = getContext(chain.getThisObject(), module) ?: run {
+                module.log(Log.WARN, TAG, "getCurrentWifiApInfo synthetic path aborted: context extraction failed")
+                return@intercept null
+            }
+            if (!HotspotHelper.isHotspotActive(context)) {
+                module.log(Log.DEBUG, TAG, "getCurrentWifiApInfo synthetic path aborted: hotspot inactive")
+                return@intercept null
+            }
 
             val ctor =
                 connectionInfoCtor ?: run {
-                    module.log(Log.WARN, TAG, "AdbConnectionInfo ctor not resolved; cannot synthesise AP info")
+                    module.log(Log.WARN, TAG, "AdbConnectionInfo ctor unresolved; synthetic AP info unavailable")
                     return@intercept null
                 }
 
@@ -120,34 +130,58 @@ object FrameworkHook {
     /**
      * Resolve AdbConnectionInfo(String bssid, String ssid) constructor.
      *
-     * Android 16 QPR2 AOSP: com.android.server.adb.AdbConnectionInfo — top-level class with
+     * Android 16 branches: com.android.server.adb.AdbConnectionInfo — top-level class with
      *   package-private (String, String) constructor.
      * Android 15: com.android.server.adb.AdbDebuggingManager$AdbConnectionInfo — nested class.
      */
     private fun resolveConnectionInfoCtor(
         classLoader: ClassLoader,
         module: XposedModule,
+        expectedReturnType: Class<*>,
     ): Constructor<*>? {
+        ReflectionCompat.findConstructor(
+            expectedReturnType,
+            module,
+            "AdbConnectionInfo(return-type)",
+            String::class.java,
+            String::class.java,
+        )?.let {
+            module.log(Log.INFO, TAG, "AdbConnectionInfo constructor class selected: ${it.declaringClass.name}")
+            return it
+        }
         val candidates =
             listOf(
                 "com.android.server.adb.AdbConnectionInfo",
                 "com.android.server.adb.AdbDebuggingManager\$AdbConnectionInfo",
             )
         for (name in candidates) {
-            val clazz = tryFindClass(name, classLoader) ?: continue
-            return try {
-                clazz
-                    .getDeclaredConstructor(String::class.java, String::class.java)
-                    .also {
-                        it.isAccessible = true
-                        module.log(Log.INFO, TAG, "resolved AdbConnectionInfo ctor: $name")
-                    }
-            } catch (e: NoSuchMethodException) {
-                module.log(Log.DEBUG, TAG, "no (String,String) ctor in $name: $e")
+            val clazz = ReflectionCompat.findFirstClass(classLoader, module, "AdbConnectionInfo", name) ?: continue
+            if (!(expectedReturnType.isAssignableFrom(clazz) || clazz.isAssignableFrom(expectedReturnType))) {
+                module.log(
+                    Log.DEBUG,
+                    TAG,
+                    "AdbConnectionInfo candidate rejected (incompatible return type): candidate=${clazz.name} returnType=${expectedReturnType.name}",
+                )
                 continue
             }
+            val ctor =
+                ReflectionCompat.findConstructor(
+                    clazz,
+                    module,
+                    "AdbConnectionInfo",
+                    String::class.java,
+                    String::class.java,
+                )
+            if (ctor != null) {
+                module.log(Log.INFO, TAG, "AdbConnectionInfo constructor class selected: ${ctor.declaringClass.name}")
+                return ctor
+            }
         }
-        module.log(Log.WARN, TAG, "AdbConnectionInfo constructor not found in any candidate class")
+        module.log(
+            Log.WARN,
+            TAG,
+            "AdbConnectionInfo constructor not found for returnType=${expectedReturnType.name}; synthetic AP info disabled",
+        )
         return null
     }
 
@@ -185,7 +219,7 @@ object FrameworkHook {
             "com.android.server.adb.AdbBroadcastReceiver",
             "com.android.server.adb.AdbDebuggingManager\$AdbBroadcastReceiver",
         )) {
-            val clazz = tryFindClass(name, classLoader) ?: continue
+            val clazz = ReflectionCompat.findFirstClass(classLoader, module, "Framework teardown receiver", name) ?: continue
             if (!BroadcastReceiver::class.java.isAssignableFrom(clazz)) {
                 module.log(Log.DEBUG, TAG, "$name is not a BroadcastReceiver; skipping onReceive hook")
                 continue
@@ -196,20 +230,15 @@ object FrameworkHook {
         }
 
         // Path C: anonymous inner BroadcastReceiver — Android 15 fallback.
-        // Only attempt if no named Android 16 class was found.
-        if (!anyHookInstalled) {
-            module.log(
-                Log.INFO,
-                TAG,
-                "no named Android 16 monitor classes found; scanning for Android 15 anonymous BroadcastReceiver",
-            )
+        // Always attempt; Android 16+ may still contain nested fallback receivers.
+        run {
+            module.log(Log.INFO, TAG, "scanning Android 15/16 anonymous ADB BroadcastReceiver fallbacks")
             val baseName = "com.android.server.adb.AdbDebuggingManager\$AdbDebuggingHandler"
             for (i in 1..15) {
-                val clazz = tryFindClass("$baseName\$$i", classLoader) ?: continue
+                val clazz = runCatching { Class.forName("$baseName\$$i", false, classLoader) }.getOrNull() ?: continue
                 if (!BroadcastReceiver::class.java.isAssignableFrom(clazz)) continue
                 if (hookOnReceive(clazz, module, "anonymous inner class $i (Android 15)")) {
                     anyHookInstalled = true
-                    break
                 }
             }
         }
@@ -237,24 +266,24 @@ object FrameworkHook {
      * We suppress onLost() and onCapabilitiesChanged() while hotspot is active.
      * User-initiated disables go through Settings.Global directly and are not affected.
      *
-     * Android 16 QPR2 AOSP: com.android.server.adb.AdbWifiNetworkMonitor confirmed.
+     * Android 16 branches commonly include com.android.server.adb.AdbWifiNetworkMonitor.
      */
     private fun hookAdbWifiNetworkMonitor(
         classLoader: ClassLoader,
         module: XposedModule,
     ): Boolean {
         val clazz =
-            tryFindClass("com.android.server.adb.AdbWifiNetworkMonitor", classLoader) ?: run {
+            ReflectionCompat.findFirstClass(classLoader, module, "Framework teardown monitor", "com.android.server.adb.AdbWifiNetworkMonitor") ?: run {
                 module.log(Log.DEBUG, TAG, "AdbWifiNetworkMonitor not found (Android < 16?)")
                 return false
             }
 
         val networkClass =
-            tryFindClass("android.net.Network", classLoader) ?: run {
+            ReflectionCompat.findFirstClass(classLoader, module, "NetworkCallback arg", "android.net.Network") ?: run {
                 module.log(Log.WARN, TAG, "android.net.Network not found; cannot hook AdbWifiNetworkMonitor")
                 return false
             }
-        val networkCapabilitiesClass = tryFindClass("android.net.NetworkCapabilities", classLoader)
+        val networkCapabilitiesClass = ReflectionCompat.findFirstClass(classLoader, module, "NetworkCallback arg", "android.net.NetworkCapabilities")
 
         module.log(Log.INFO, TAG, "found AdbWifiNetworkMonitor; installing Android 16 NetworkCallback hooks")
         var installed = false
@@ -361,15 +390,25 @@ object FrameworkHook {
      * Android 16: handler may be top-level with a direct mContext field, or hold a reference
      *   to AdbDebuggingManager.
      */
-    private fun getContext(handler: Any?): Context? {
+    private fun getContext(
+        handler: Any?,
+        module: XposedModule,
+    ): Context? {
         handler ?: return null
         return try {
+            (ReflectionCompat.getFieldValueByName(handler, "mContext") as? Context)?.also {
+                module.log(Log.DEBUG, TAG, "context extraction: direct handler.mContext")
+                return it
+            }
             val outer =
-                getFieldValue(handler, "this\$0")
-                    ?: findFieldByTypeName(handler, "com.android.server.adb.AdbDebuggingManager")
-                    ?: handler
-            (getFieldValue(outer, "mContext") as? Context)
-                ?: (getFieldValue(handler, "mContext") as? Context)
+                ReflectionCompat.getFieldValueByName(handler, "this\$0")
+                    ?: ReflectionCompat.getFieldValueByName(handler, "mAdbDebuggingManager")
+                    ?: ReflectionCompat.getFieldValueByType(handler, "com.android.server.adb.AdbDebuggingManager")
+                    ?: ReflectionCompat.getFieldByNamesOrTypes(handler, listOf("mManager"), listOf("com.android.server.adb.AdbDebuggingManager"))?.get(handler)
+            (outer?.let { ReflectionCompat.getFieldValueByName(it, "mContext") } as? Context)?.also {
+                module.log(Log.DEBUG, TAG, "context extraction: manager.mContext via ${outer?.javaClass?.name}")
+                return it
+            }
         } catch (e: Exception) {
             Log.w(TAG, "$TAG: failed to get context from handler: $e")
             null
@@ -385,13 +424,13 @@ object FrameworkHook {
     private fun getContextFromMonitor(monitor: Any?): Context? {
         monitor ?: return null
         return try {
-            (getFieldValue(monitor, "mContext") as? Context)
+            (ReflectionCompat.getFieldValueByName(monitor, "mContext") as? Context)
                 ?: run {
                     val manager =
-                        getFieldValue(monitor, "mAdbDebuggingManager")
-                            ?: findFieldByTypeName(monitor, "com.android.server.adb.AdbDebuggingManager")
-                            ?: getFieldValue(monitor, "this\$0")
-                    manager?.let { getFieldValue(it, "mContext") as? Context }
+                        ReflectionCompat.getFieldValueByName(monitor, "mAdbDebuggingManager")
+                            ?: ReflectionCompat.getFieldValueByType(monitor, "com.android.server.adb.AdbDebuggingManager")
+                            ?: ReflectionCompat.getFieldValueByName(monitor, "this\$0")
+                    manager?.let { ReflectionCompat.getFieldValueByName(it, "mContext") as? Context }
                 }
         } catch (e: Exception) {
             Log.w(TAG, "$TAG: failed to get context from AdbWifiNetworkMonitor: $e")
@@ -409,51 +448,6 @@ object FrameworkHook {
             "HotspotAP"
         }
 
-    // ---- Reflection utilities ----
-
-    private fun tryFindClass(
-        name: String,
-        classLoader: ClassLoader,
-    ): Class<*>? =
-        try {
-            Class.forName(name, false, classLoader)
-        } catch (_: ClassNotFoundException) {
-            null
-        }
-
-    private fun getFieldValue(
-        obj: Any,
-        name: String,
-    ): Any? {
-        var cls: Class<*>? = obj.javaClass
-        while (cls != null && cls != Any::class.java) {
-            try {
-                val field = cls.getDeclaredField(name)
-                field.isAccessible = true
-                return field.get(obj)
-            } catch (_: NoSuchFieldException) {
-                cls = cls.superclass
-            }
-        }
-        return null
-    }
-
-    private fun findFieldByTypeName(
-        obj: Any,
-        typeName: String,
-    ): Any? {
-        var cls: Class<*>? = obj.javaClass
-        while (cls != null && cls != Any::class.java) {
-            for (field in cls.declaredFields) {
-                if (field.type.name == typeName) {
-                    field.isAccessible = true
-                    return field.get(obj)
-                }
-            }
-            cls = cls.superclass
-        }
-        return null
-    }
 
     private const val TAG = HotspotAdbModule.TAG
 }

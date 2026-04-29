@@ -66,38 +66,37 @@ object SettingsHook {
         module: XposedModule,
     ) {
         // Android 16+: AdbWirelessDebuggingPreferenceController; Android 15: WirelessDebuggingPreferenceController
-        val clazz =
-            tryFindClass(
-                "com.android.settings.development.AdbWirelessDebuggingPreferenceController",
-                classLoader,
-            ) ?: tryFindClass(
-                "com.android.settings.development.WirelessDebuggingPreferenceController",
-                classLoader,
-            ) ?: run {
-                module.log(
-                    Log.WARN,
-                    TAG,
-                    "WirelessDebuggingPreferenceController not found (tried Android 16 and 15 names); isWifiConnected hook skipped",
-                )
-                return
-            }
-        val method =
-            tryGetMethod(clazz, "isWifiConnected", Context::class.java) ?: run {
-                module.log(Log.WARN, TAG, "isWifiConnected not found in ${clazz.simpleName}")
-                return
-            }
+        val clazz = ReflectionCompat.findFirstClass(
+            classLoader,
+            module,
+            "Settings Wi-Fi gate",
+            "com.android.settings.development.AdbWirelessDebuggingPreferenceController",
+            "com.android.settings.development.WirelessDebuggingPreferenceController",
+        ) ?: return
+        val method = ReflectionCompat.findMethod(
+            clazz,
+            module,
+            "Settings Wi-Fi gate",
+            "isWifiConnected",
+            includeInherited = true,
+            Context::class.java,
+        ) ?: return
 
         module.hook(method).intercept { chain ->
             val result = chain.proceed()
             if (result == false) {
                 val context = chain.getArg(0) as? Context ?: return@intercept result
-                if (HotspotHelper.isHotspotActive(context)) {
-                    module.log(Log.INFO, TAG, "isWifiConnected → true (hotspot active; allowing Wireless Debugging UI)")
+                val hotspotActive = HotspotHelper.isHotspotActive(context)
+                module.log(Log.INFO, TAG, "isWifiConnected original=$result hotspotActive=$hotspotActive")
+                if (hotspotActive) {
+                    module.log(Log.INFO, TAG, "isWifiConnected decision=changed(true)")
                     true
                 } else {
+                    module.log(Log.INFO, TAG, "isWifiConnected decision=pass-through(false)")
                     result
                 }
             } else {
+                module.log(Log.INFO, TAG, "isWifiConnected original=$result decision=pass-through")
                 result
             }
         }
@@ -110,24 +109,24 @@ object SettingsHook {
         classLoader: ClassLoader,
         module: XposedModule,
     ) {
-        val clazz =
-            tryFindClass(
-                "com.android.settings.development.AdbIpAddressPreferenceController",
-                classLoader,
-            ) ?: run {
-                module.log(Log.WARN, TAG, "AdbIpAddressPreferenceController not found; getIpv4Address hook skipped")
-                return
-            }
-        val method =
-            tryGetMethod(clazz, "getIpv4Address") ?: run {
-                module.log(Log.WARN, TAG, "getIpv4Address not found in AdbIpAddressPreferenceController")
-                return
-            }
+        val clazz = ReflectionCompat.findFirstClass(
+            classLoader,
+            module,
+            "Settings IPv4",
+            "com.android.settings.development.AdbIpAddressPreferenceController",
+        ) ?: return
+        val method = ReflectionCompat.findMethod(
+            clazz,
+            module,
+            "Settings IPv4",
+            "getIpv4Address",
+            includeInherited = true,
+        ) ?: return
 
         module.hook(method).intercept { chain ->
             val thisObj = chain.getThisObject() ?: return@intercept chain.proceed()
             val context =
-                getFieldValue(thisObj, "mContext") as? Context
+                ReflectionCompat.getFieldValueByName(thisObj, "mContext") as? Context
                     ?: return@intercept chain.proceed()
             if (!HotspotHelper.isHotspotActive(context)) return@intercept chain.proceed()
             val ip = HotspotHelper.getHotspotIpAddress(context) ?: return@intercept chain.proceed()
@@ -143,21 +142,15 @@ object SettingsHook {
         classLoader: ClassLoader,
         module: XposedModule,
     ) {
-        val clazz =
-            tryFindClass(
-                "com.android.settings.wifi.tether.WifiTetherSettings",
-                classLoader,
-            ) ?: run {
-                module.log(Log.WARN, TAG, "WifiTetherSettings not found; hotspot toggle injection skipped")
-                return
-            }
+        val clazz = ReflectionCompat.findFirstClass(
+            classLoader,
+            module,
+            "Settings tether fragment",
+            "com.android.settings.wifi.tether.WifiTetherSettings",
+        ) ?: return
 
         // onStart: inject preference (if not already present) and register observers.
-        val onStart =
-            tryGetMethod(clazz, "onStart") ?: run {
-                module.log(Log.WARN, TAG, "WifiTetherSettings.onStart not found")
-                return
-            }
+        val onStart = ReflectionCompat.findMethod(clazz, module, "Settings tether fragment", "onStart", includeInherited = true) ?: return
         module.hook(onStart).intercept { chain ->
             chain.proceed()
             try {
@@ -170,11 +163,7 @@ object SettingsHook {
         module.log(Log.INFO, TAG, "hooked WifiTetherSettings.onStart")
 
         // onStop: unregister observers and cancel pending handler callbacks.
-        val onStop =
-            tryGetMethod(clazz, "onStop") ?: run {
-                module.log(Log.WARN, TAG, "WifiTetherSettings.onStop not found; cleanup hook skipped (potential listener leak)")
-                return
-            }
+        val onStop = ReflectionCompat.findMethod(clazz, module, "Settings tether fragment", "onStop", includeInherited = true) ?: return
         module.hook(onStop).intercept { chain ->
             try {
                 cleanupFragment(chain.getThisObject()!!, module)
