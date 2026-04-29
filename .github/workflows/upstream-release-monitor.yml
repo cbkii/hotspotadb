@@ -106,7 +106,7 @@ A new upstream release was detected.
 
 - Upstream repo: https://github.com/${UPSTREAM_REPO}
 - Upstream release tag: ${UPSTREAM_TAG}
-- Compare URL: https://github.com/${UPSTREAM_REPO}/compare/${UPSTREAM_TAG}...${GITHUB_REF_NAME}
+- Compare URL: https://github.com/${REPO}/compare/${UPSTREAM_TAG}...${GITHUB_REF_NAME}
 
 Current codebase comparison summary against this repo branch (**${GITHUB_REF_NAME}**):
 

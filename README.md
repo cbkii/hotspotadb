@@ -22,7 +22,7 @@ This module changes that behavior so Wireless Debugging can stay available when 
 
 - Android: **15 supported**
 - Android: **16 expected to work** (framework-side branch drift still possible)
-- Module type: **legacy XposedBridge module**
+- Module type: **libxposed API 101 module**
 - Scopes required: `android` and `com.android.settings`
 
 ## Requirements
