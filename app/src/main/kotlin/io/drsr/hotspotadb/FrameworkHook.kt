@@ -73,16 +73,17 @@ object FrameworkHook {
                 classLoader,
                 module,
                 "Framework enablement handler",
-                "com.android.server.adb.AdbDebuggingManager$AdbDebuggingHandler",
+                "com.android.server.adb.AdbDebuggingManager\$AdbDebuggingHandler",
             ) ?: return
 
-        val method = ReflectionCompat.findMethod(
-            handlerClass,
-            module,
-            "Framework enablement",
-            "getCurrentWifiApInfo",
-            includeInherited = true,
-        ) ?: return
+        val method =
+            ReflectionCompat.findMethod(
+                handlerClass,
+                module,
+                "Framework enablement",
+                "getCurrentWifiApInfo",
+                includeInherited = true,
+            ) ?: return
 
         module.log(Log.INFO, TAG, "getCurrentWifiApInfo returnType=${method.returnType.name}")
         connectionInfoCtor = resolveConnectionInfoCtor(classLoader, module, method.returnType)
@@ -99,10 +100,11 @@ object FrameworkHook {
             }
             module.log(Log.DEBUG, TAG, "getCurrentWifiApInfo originalResult=null entering synthetic branch")
 
-            val context = getContext(chain.getThisObject(), module) ?: run {
-                module.log(Log.WARN, TAG, "getCurrentWifiApInfo synthetic path aborted: context extraction failed")
-                return@intercept null
-            }
+            val context =
+                getContext(chain.getThisObject(), module) ?: run {
+                    module.log(Log.WARN, TAG, "getCurrentWifiApInfo synthetic path aborted: context extraction failed")
+                    return@intercept null
+                }
             if (!HotspotHelper.isHotspotActive(context)) {
                 module.log(Log.DEBUG, TAG, "getCurrentWifiApInfo synthetic path aborted: hotspot inactive")
                 return@intercept null
@@ -160,7 +162,8 @@ object FrameworkHook {
                 module.log(
                     Log.DEBUG,
                     TAG,
-                    "AdbConnectionInfo candidate rejected (incompatible return type): candidate=${clazz.name} returnType=${expectedReturnType.name}",
+                    "AdbConnectionInfo candidate rejected (incompatible return type): " +
+                        "candidate=${clazz.name} returnType=${expectedReturnType.name}",
                 )
                 continue
             }
@@ -273,7 +276,12 @@ object FrameworkHook {
         module: XposedModule,
     ): Boolean {
         val clazz =
-            ReflectionCompat.findFirstClass(classLoader, module, "Framework teardown monitor", "com.android.server.adb.AdbWifiNetworkMonitor") ?: run {
+            ReflectionCompat.findFirstClass(
+                classLoader,
+                module,
+                "Framework teardown monitor",
+                "com.android.server.adb.AdbWifiNetworkMonitor",
+            ) ?: run {
                 module.log(Log.DEBUG, TAG, "AdbWifiNetworkMonitor not found (Android < 16?)")
                 return false
             }
@@ -283,7 +291,13 @@ object FrameworkHook {
                 module.log(Log.WARN, TAG, "android.net.Network not found; cannot hook AdbWifiNetworkMonitor")
                 return false
             }
-        val networkCapabilitiesClass = ReflectionCompat.findFirstClass(classLoader, module, "NetworkCallback arg", "android.net.NetworkCapabilities")
+        val networkCapabilitiesClass =
+            ReflectionCompat.findFirstClass(
+                classLoader,
+                module,
+                "NetworkCallback arg",
+                "android.net.NetworkCapabilities",
+            )
 
         module.log(Log.INFO, TAG, "found AdbWifiNetworkMonitor; installing Android 16 NetworkCallback hooks")
         var installed = false

@@ -30,17 +30,19 @@ object ReflectionCompat {
         includeInherited: Boolean,
         vararg params: Class<*>,
     ): Method? {
-        val declared = runCatching { clazz.getDeclaredMethod(name, *params).also { it.isAccessible = true } }.getOrNull()
-        if (declared != null) {
-            module.log(Log.INFO, TAG, "$label method selected (declared): ${declared.toGenericString()}")
-            return declared
-        }
-        if (includeInherited) {
-            val inherited = runCatching { clazz.getMethod(name, *params).also { it.isAccessible = true } }.getOrNull()
-            if (inherited != null) {
-                module.log(Log.INFO, TAG, "$label method selected (inherited): ${inherited.toGenericString()}")
-                return inherited
+        // Walk hierarchy with getDeclaredMethod so protected/package-private methods in
+        // superclasses are reachable, unlike getMethod() which only surfaces public methods.
+        var cls: Class<*>? = clazz
+        while (cls != null && cls != Any::class.java) {
+            val current = cls
+            val method = runCatching { current.getDeclaredMethod(name, *params).also { it.isAccessible = true } }.getOrNull()
+            if (method != null) {
+                val origin = if (current == clazz) "declared" else "inherited from ${current.name}"
+                module.log(Log.INFO, TAG, "$label method selected ($origin): ${method.toGenericString()}")
+                return method
             }
+            if (!includeInherited) break
+            cls = cls.superclass
         }
         module.log(Log.WARN, TAG, "$label method missing: ${clazz.name}#$name(${params.joinToString { it.simpleName }})")
         return null
