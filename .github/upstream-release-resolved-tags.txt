@@ -1,0 +1,7 @@
+# One upstream tag per line. Exact match.
+# Tags listed here are treated as already resolved and will not create/update monitor issues.
+# Update this list when an upstream release is reviewed and completed.
+
+# Baseline (current upstream release at time of standalone cutover):
+# Replace this with the exact tag if different.
+v1.0.0

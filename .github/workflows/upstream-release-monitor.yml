@@ -1,0 +1,128 @@
+name: Upstream Release Monitor
+
+on:
+  schedule:
+    - cron: '25 5 * * *'
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  compare-upstream-release:
+    runs-on: ubuntu-latest
+    env:
+      UPSTREAM_REPO: droserasprout/io.drsr.hotspotadb
+    steps:
+      - name: Fetch upstream latest release
+        id: upstream
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          TAG="$(gh release list --repo "$UPSTREAM_REPO" --limit 1 --json tagName --jq '.[0].tagName // ""')"
+          if [ -z "$TAG" ]; then
+            echo "::error::No release found for $UPSTREAM_REPO"
+            exit 1
+          fi
+
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Latest upstream release: $TAG"
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Skip if tag is pre-resolved in repo list
+        id: resolved_list
+        shell: bash
+        env:
+          UPSTREAM_TAG: ${{ steps.upstream.outputs.tag }}
+        run: |
+          set -euo pipefail
+          RESOLVED_FILE=".github/upstream-release-resolved-tags.txt"
+          if [ ! -f "$RESOLVED_FILE" ]; then
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if grep -Ev '^[[:space:]]*(#|$)' "$RESOLVED_FILE" | grep -Fxq "$UPSTREAM_TAG"; then
+            echo "Upstream tag $UPSTREAM_TAG is marked resolved in $RESOLVED_FILE; skipping."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Compare upstream release code with current branch
+        id: diff
+        if: steps.resolved_list.outputs.skip != 'true'
+        shell: bash
+        env:
+          UPSTREAM_TAG: ${{ steps.upstream.outputs.tag }}
+        run: |
+          set -euo pipefail
+
+          git remote add upstream "https://github.com/${UPSTREAM_REPO}.git"
+          git fetch --tags upstream
+          git fetch origin "$GITHUB_REF_NAME"
+
+          DIFFSTAT="$(git diff --shortstat "refs/tags/${UPSTREAM_TAG}"..."origin/${GITHUB_REF_NAME}" || true)"
+          COMMITS_AHEAD="$(git rev-list --count "refs/tags/${UPSTREAM_TAG}".."origin/${GITHUB_REF_NAME}" || echo 0)"
+          COMMITS_BEHIND="$(git rev-list --count "origin/${GITHUB_REF_NAME}".."refs/tags/${UPSTREAM_TAG}" || echo 0)"
+          DIFFSTAT="${DIFFSTAT:-No file-level diff summary generated.}"
+
+          {
+            echo "diffstat=$DIFFSTAT"
+            echo "ahead=$COMMITS_AHEAD"
+            echo "behind=$COMMITS_BEHIND"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Open or update tracking issue
+        if: steps.resolved_list.outputs.skip != 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          UPSTREAM_TAG: ${{ steps.upstream.outputs.tag }}
+          DIFFSTAT: ${{ steps.diff.outputs.diffstat }}
+          AHEAD: ${{ steps.diff.outputs.ahead }}
+          BEHIND: ${{ steps.diff.outputs.behind }}
+        run: |
+          set -euo pipefail
+
+          TITLE="Upstream release monitor: ${UPSTREAM_REPO} ${UPSTREAM_TAG}"
+          SEARCH="${TITLE} in:title"
+          OPEN_ISSUE_NUMBER="$(gh issue list --repo "$REPO" --state open --search "$SEARCH" --json number --jq '.[0].number // ""')"
+          CLOSED_ISSUE_NUMBER="$(gh issue list --repo "$REPO" --state closed --search "$SEARCH" --json number --jq '.[0].number // ""')"
+
+          if [ -n "$CLOSED_ISSUE_NUMBER" ]; then
+            echo "Resolved closed issue already exists for $UPSTREAM_TAG (#$CLOSED_ISSUE_NUMBER); skipping new issue."
+            exit 0
+          fi
+
+          BODY=$(cat <<MSG
+A new upstream release was detected.
+
+- Upstream repo: https://github.com/${UPSTREAM_REPO}
+- Upstream release tag: ${UPSTREAM_TAG}
+- Compare URL: https://github.com/${REPO}/compare/${UPSTREAM_TAG}...${GITHUB_REF_NAME}
+
+Current codebase comparison summary against this repo branch (**${GITHUB_REF_NAME}**):
+
+- Commits ahead of upstream tag: **${AHEAD}**
+- Commits behind upstream tag: **${BEHIND}**
+- Diff shortstat: **${DIFFSTAT}**
+
+Checklist:
+- [ ] Review upstream release notes
+- [ ] Decide whether to cherry-pick/port relevant changes
+- [ ] Close this issue when triage is complete
+MSG
+)
+
+          if [ -n "$OPEN_ISSUE_NUMBER" ]; then
+            gh issue comment "$OPEN_ISSUE_NUMBER" --repo "$REPO" --body "$BODY"
+          else
+            gh issue create --repo "$REPO" --title "$TITLE" --body "$BODY"
+          fi
