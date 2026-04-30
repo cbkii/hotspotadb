@@ -201,8 +201,8 @@ jobs:
                 exit 1
               }
             done
-            unzip -p "$APK_PATH" META-INF/xposed/java_init.list | grep -qx 'io.drsr.hotspotadb.HotspotAdbModule' || {
-              echo "::error::java_init.list does not contain io.drsr.hotspotadb.HotspotAdbModule"
+            unzip -p "$APK_PATH" META-INF/xposed/java_init.list | grep -qx 'io.cbkii.hotspotadb.HotspotAdbModule' || {
+              echo "::error::java_init.list does not contain io.cbkii.hotspotadb.HotspotAdbModule"
               exit 1
             }
             for scope in com.android.settings android; do
@@ -219,8 +219,8 @@ jobs:
             done
           elif unzip -p "$APK_PATH" assets/xposed_init > /dev/null 2>&1; then
             echo "Detected legacy Xposed packaging"
-            unzip -p "$APK_PATH" assets/xposed_init | grep -qx 'io.drsr.hotspotadb.HotspotAdbModule' || {
-              echo "::error::assets/xposed_init does not contain io.drsr.hotspotadb.HotspotAdbModule"
+            unzip -p "$APK_PATH" assets/xposed_init | grep -qx 'io.cbkii.hotspotadb.HotspotAdbModule' || {
+              echo "::error::assets/xposed_init does not contain io.cbkii.hotspotadb.HotspotAdbModule"
               exit 1
             }
           else

@@ -10,13 +10,13 @@ detekt {
 }
 
 android {
-    namespace = "io.drsr.hotspotadb"
+    namespace = "io.cbkii.hotspotadb"
     // API 36 = Android 16
     compileSdk = 36
     buildToolsVersion = "35.0.0"
 
     defaultConfig {
-        applicationId = "io.drsr.hotspotadb"
+        applicationId = "io.cbkii.hotspotadb"
         // minSdk stays at 35 (Android 15): the module targets Android 15+ only
         minSdk = 35
         targetSdk = 36

@@ -1,4 +1,4 @@
-package io.drsr.hotspotadb
+package io.cbkii.hotspotadb
 
 import android.content.BroadcastReceiver
 import android.content.Context

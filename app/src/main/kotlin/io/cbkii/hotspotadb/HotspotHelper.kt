@@ -1,4 +1,4 @@
-package io.drsr.hotspotadb
+package io.cbkii.hotspotadb
 
 import android.content.Context
 import android.net.wifi.WifiManager

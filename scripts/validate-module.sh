@@ -19,7 +19,7 @@ for f in META-INF/xposed/module.prop META-INF/xposed/java_init.list META-INF/xpo
   echo "OK: $f"
 done
 
-unzip -p "$APK" META-INF/xposed/java_init.list | grep -qF "io.drsr.hotspotadb.HotspotAdbModule"
+unzip -p "$APK" META-INF/xposed/java_init.list | grep -qF "io.cbkii.hotspotadb.HotspotAdbModule"
 unzip -p "$APK" META-INF/xposed/scope.list | grep -qF "android"
 unzip -p "$APK" META-INF/xposed/scope.list | grep -qF "com.android.settings"
 unzip -p "$APK" META-INF/xposed/module.prop | grep -qF "minApiVersion=101"

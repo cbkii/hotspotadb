@@ -1,4 +1,4 @@
-package io.drsr.hotspotadb
+package io.cbkii.hotspotadb
 
 import android.util.Log
 import io.github.libxposed.api.XposedModule

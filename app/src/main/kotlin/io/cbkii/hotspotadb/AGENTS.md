@@ -2,7 +2,7 @@
 
 ## Scope of this file
 
-These instructions apply specifically to the Kotlin hook implementation under `app/src/main/kotlin/io/drsr/hotspotadb`.
+These instructions apply specifically to the Kotlin hook implementation under `app/src/main/kotlin/io/cbkii/hotspotadb`.
 
 ## Local architecture
 
