@@ -81,7 +81,6 @@ If it fails, include these in your bug report:
 - Trust identity uses a synthetic stable BSSID to avoid trust reset on each hotspot cycle.
 - Hotspot detection and IP discovery are heuristic by design.
 
-
 ## Upstream monitoring
 
 This standalone repo does not rely on GitHub fork-network status for sync awareness.
