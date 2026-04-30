@@ -81,6 +81,24 @@ If it fails, include these in your bug report:
 - Trust identity uses a synthetic stable BSSID to avoid trust reset on each hotspot cycle.
 - Hotspot detection and IP discovery are heuristic by design.
 
+
+## Upstream monitoring
+
+This standalone repo does not rely on GitHub fork-network status for sync awareness.
+Instead, `.github/workflows/upstream-release-monitor.yml` checks upstream releases on a schedule and opens/updates triage issues only when needed.
+
+How suppression works:
+- tags listed in `.github/upstream-release-resolved-tags.txt` are skipped
+- closed issues for the same upstream tag are treated as resolved
+- unchanged reruns are deduplicated via a fingerprint marker
+- already-integrated/trivial diffs are suppressed unless force mode is used
+
+Manual run options (Actions > Upstream Release Monitor):
+- `upstream_repo`: override monitored upstream
+- `upstream_tag`: replay a specific tag
+- `include_prerelease`: include prereleases in auto-selection
+- `force`: bypass suppression heuristics for operator verification
+
 ## Build from source
 
 Requires JDK 21 and Android SDK API 36.

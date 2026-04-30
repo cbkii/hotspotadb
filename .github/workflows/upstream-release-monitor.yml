@@ -3,126 +3,319 @@ name: Upstream Release Monitor
 on:
   schedule:
     - cron: '25 5 * * *'
+  workflow_dispatch:
+    inputs:
+      upstream_repo:
+        description: 'Optional upstream repo override (owner/name)'
+        required: false
+        type: string
+      upstream_tag:
+        description: 'Optional exact upstream tag to replay/verify'
+        required: false
+        type: string
+      include_prerelease:
+        description: 'Consider prereleases when selecting latest upstream release'
+        required: false
+        type: boolean
+        default: false
+      force:
+        description: 'Bypass suppression heuristics and force issue create/update path'
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
   issues: write
 
+concurrency:
+  group: upstream-release-monitor-${{ github.ref_name }}
+  cancel-in-progress: true
+
 jobs:
   compare-upstream-release:
     runs-on: ubuntu-latest
     env:
-      UPSTREAM_REPO: droserasprout/io.drsr.hotspotadb
+      DEFAULT_UPSTREAM_REPO: droserasprout/io.drsr.hotspotadb
     steps:
-      - name: Fetch upstream latest release
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Resolve monitor inputs
+        id: cfg
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "[upstream-monitor] Resolving inputs"
+
+          INPUT_UPSTREAM_REPO="${{ inputs.upstream_repo || '' }}"
+          INPUT_UPSTREAM_TAG="${{ inputs.upstream_tag || '' }}"
+          INPUT_INCLUDE_PRERELEASE="${{ inputs.include_prerelease || false }}"
+          INPUT_FORCE="${{ inputs.force || false }}"
+
+          if [ -n "$INPUT_UPSTREAM_REPO" ]; then
+            UPSTREAM_REPO="$INPUT_UPSTREAM_REPO"
+          else
+            UPSTREAM_REPO="$DEFAULT_UPSTREAM_REPO"
+          fi
+
+          {
+            echo "upstream_repo=$UPSTREAM_REPO"
+            echo "manual_tag=$INPUT_UPSTREAM_TAG"
+            echo "include_prerelease=$INPUT_INCLUDE_PRERELEASE"
+            echo "force=$INPUT_FORCE"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Select upstream tag
         id: upstream
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          UPSTREAM_REPO: ${{ steps.cfg.outputs.upstream_repo }}
+          MANUAL_TAG: ${{ steps.cfg.outputs.manual_tag }}
+          INCLUDE_PRERELEASE: ${{ steps.cfg.outputs.include_prerelease }}
+          FORCE: ${{ steps.cfg.outputs.force }}
         run: |
           set -euo pipefail
+          echo "[upstream-monitor] Selecting upstream tag for $UPSTREAM_REPO"
 
-          TAG="$(gh release list --repo "$UPSTREAM_REPO" --limit 1 --json tagName --jq '.[0].tagName // ""')"
-          if [ -z "$TAG" ]; then
-            echo "::error::No release found for $UPSTREAM_REPO"
-            exit 1
+          if [ -n "$MANUAL_TAG" ]; then
+            TAG="$MANUAL_TAG"
+            SOURCE="manual"
+          else
+            RELEASES_JSON="$(gh api "repos/${UPSTREAM_REPO}/releases?per_page=20")"
+            TAG="$(jq -r --argjson include_prerelease "$INCLUDE_PRERELEASE" '
+              map(select(.draft == false))
+              | if $include_prerelease then . else map(select(.prerelease == false)) end
+              | .[0].tag_name // ""
+            ' <<< "$RELEASES_JSON")"
+            SOURCE="api"
           fi
 
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "Latest upstream release: $TAG"
+          if [ -z "$TAG" ]; then
+            if [ "$FORCE" = "true" ]; then
+              echo "::error::[upstream-monitor] No eligible upstream release found for $UPSTREAM_REPO (force=true)."
+              exit 1
+            fi
+            {
+              echo "tag="
+              echo "skip=true"
+              echo "skip_reason=no_release"
+              echo "source=$SOURCE"
+            } >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
 
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+          {
+            echo "tag=$TAG"
+            echo "skip=false"
+            echo "skip_reason="
+            echo "source=$SOURCE"
+          } >> "$GITHUB_OUTPUT"
 
-      - name: Skip if tag is pre-resolved in repo list
-        id: resolved_list
+      - name: Check resolved tags suppression
+        id: resolved
+        if: steps.upstream.outputs.skip != 'true'
         shell: bash
         env:
+          UPSTREAM_REPO: ${{ steps.cfg.outputs.upstream_repo }}
           UPSTREAM_TAG: ${{ steps.upstream.outputs.tag }}
+          FORCE: ${{ steps.cfg.outputs.force }}
         run: |
           set -euo pipefail
           RESOLVED_FILE=".github/upstream-release-resolved-tags.txt"
-          if [ ! -f "$RESOLVED_FILE" ]; then
+          echo "[upstream-monitor] Checking resolved tags list"
+
+          if [ "$FORCE" = "true" ]; then
             echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "reason=force" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          if grep -Ev '^[[:space:]]*(#|$)' "$RESOLVED_FILE" | grep -Fxq "$UPSTREAM_TAG"; then
-            echo "Upstream tag $UPSTREAM_TAG is marked resolved in $RESOLVED_FILE; skipping."
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-          else
+
+          if [ ! -f "$RESOLVED_FILE" ]; then
             echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "reason=file_missing" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
 
-      - name: Compare upstream release code with current branch
+          CLEANED="$(awk '
+            /^[[:space:]]*#/ { next }
+            /^[[:space:]]*$/ { next }
+            { gsub(/^[[:space:]]+|[[:space:]]+$/, "", $0); print }
+          ' "$RESOLVED_FILE")"
+
+          TAG_MATCH="false"
+          TUPLE_MATCH="false"
+          if grep -Fxq "$UPSTREAM_TAG" <<< "$CLEANED"; then
+            TAG_MATCH="true"
+          fi
+          if grep -Fxq "${UPSTREAM_REPO}@${UPSTREAM_TAG}" <<< "$CLEANED"; then
+            TUPLE_MATCH="true"
+          fi
+
+          if [ "$TAG_MATCH" = "true" ] || [ "$TUPLE_MATCH" = "true" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "reason=resolved_tag" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "reason=not_resolved" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Compare upstream tag against current branch
         id: diff
-        if: steps.resolved_list.outputs.skip != 'true'
+        if: steps.upstream.outputs.skip != 'true' && steps.resolved.outputs.skip != 'true'
         shell: bash
         env:
+          UPSTREAM_REPO: ${{ steps.cfg.outputs.upstream_repo }}
           UPSTREAM_TAG: ${{ steps.upstream.outputs.tag }}
+          BRANCH_NAME: ${{ github.ref_name }}
+          FORCE: ${{ steps.cfg.outputs.force }}
         run: |
           set -euo pipefail
+          echo "[upstream-monitor] Computing ahead/behind + shortstat"
 
           git remote add upstream "https://github.com/${UPSTREAM_REPO}.git"
-          git fetch --tags upstream
-          git fetch origin "$GITHUB_REF_NAME"
+          git fetch --depth=1 upstream "refs/tags/${UPSTREAM_TAG}:refs/tags/${UPSTREAM_TAG}" || true
+          git fetch --depth=1 origin "${BRANCH_NAME}"
 
-          DIFFSTAT="$(git diff --shortstat "refs/tags/${UPSTREAM_TAG}"..."origin/${GITHUB_REF_NAME}" || true)"
-          COMMITS_AHEAD="$(git rev-list --count "refs/tags/${UPSTREAM_TAG}".."origin/${GITHUB_REF_NAME}" || echo 0)"
-          COMMITS_BEHIND="$(git rev-list --count "origin/${GITHUB_REF_NAME}".."refs/tags/${UPSTREAM_TAG}" || echo 0)"
-          DIFFSTAT="${DIFFSTAT:-No file-level diff summary generated.}"
+          if ! git rev-parse -q --verify "refs/tags/${UPSTREAM_TAG}" >/dev/null; then
+            if [ "$FORCE" = "true" ]; then
+              echo "::error::[upstream-monitor] Missing upstream tag ref: ${UPSTREAM_TAG}"
+              exit 1
+            fi
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "skip_reason=missing_upstream_tag_ref" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          TARGET_REF="origin/${BRANCH_NAME}"
+          COMMITS_AHEAD="$(git rev-list --count "refs/tags/${UPSTREAM_TAG}".."${TARGET_REF}" || echo 0)"
+          COMMITS_BEHIND="$(git rev-list --count "${TARGET_REF}".."refs/tags/${UPSTREAM_TAG}" || echo 0)"
+          DIFFSTAT="$(git diff --shortstat "refs/tags/${UPSTREAM_TAG}"..."${TARGET_REF}" || true)"
+          DIFFSTAT="${DIFFSTAT:-No file-level changes detected.}"
+
+          TAG_COMMIT="$(git rev-list -n 1 "refs/tags/${UPSTREAM_TAG}")"
+          TAG_CONTAINED="false"
+          if git merge-base --is-ancestor "$TAG_COMMIT" "$TARGET_REF"; then
+            TAG_CONTAINED="true"
+          fi
+
+          TRIVIAL_DIFF="false"
+          if [ "$COMMITS_BEHIND" = "0" ] && [ "$DIFFSTAT" = "No file-level changes detected." ]; then
+            TRIVIAL_DIFF="true"
+          fi
 
           {
-            echo "diffstat=$DIFFSTAT"
+            echo "skip=false"
+            echo "skip_reason="
             echo "ahead=$COMMITS_AHEAD"
             echo "behind=$COMMITS_BEHIND"
+            echo "diffstat=$DIFFSTAT"
+            echo "tag_contained=$TAG_CONTAINED"
+            echo "trivial_diff=$TRIVIAL_DIFF"
           } >> "$GITHUB_OUTPUT"
 
       - name: Open or update tracking issue
-        if: steps.resolved_list.outputs.skip != 'true'
+        id: issue
+        if: steps.upstream.outputs.skip != 'true' && steps.resolved.outputs.skip != 'true' && steps.diff.outputs.skip != 'true'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
+          UPSTREAM_REPO: ${{ steps.cfg.outputs.upstream_repo }}
           UPSTREAM_TAG: ${{ steps.upstream.outputs.tag }}
-          DIFFSTAT: ${{ steps.diff.outputs.diffstat }}
           AHEAD: ${{ steps.diff.outputs.ahead }}
           BEHIND: ${{ steps.diff.outputs.behind }}
+          DIFFSTAT: ${{ steps.diff.outputs.diffstat }}
+          TAG_CONTAINED: ${{ steps.diff.outputs.tag_contained }}
+          TRIVIAL_DIFF: ${{ steps.diff.outputs.trivial_diff }}
+          FORCE: ${{ steps.cfg.outputs.force }}
+          BRANCH_NAME: ${{ github.ref_name }}
         run: |
           set -euo pipefail
+          echo "[upstream-monitor] Evaluating issue lifecycle"
 
           TITLE="Upstream release monitor: ${UPSTREAM_REPO} ${UPSTREAM_TAG}"
           SEARCH="${TITLE} in:title"
+
           OPEN_ISSUE_NUMBER="$(gh issue list --repo "$REPO" --state open --search "$SEARCH" --json number --jq '.[0].number // ""')"
           CLOSED_ISSUE_NUMBER="$(gh issue list --repo "$REPO" --state closed --search "$SEARCH" --json number --jq '.[0].number // ""')"
 
-          if [ -n "$CLOSED_ISSUE_NUMBER" ]; then
-            echo "Resolved closed issue already exists for $UPSTREAM_TAG (#$CLOSED_ISSUE_NUMBER); skipping new issue."
+          if [ "$FORCE" != "true" ] && [ -n "$CLOSED_ISSUE_NUMBER" ]; then
+            echo "action=skipped_closed_issue" >> "$GITHUB_OUTPUT"
+            echo "issue_number=$CLOSED_ISSUE_NUMBER" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
+          if [ "$FORCE" != "true" ] && { [ "$TAG_CONTAINED" = "true" ] || [ "$TRIVIAL_DIFF" = "true" ]; }; then
+            echo "action=skipped_integrated" >> "$GITHUB_OUTPUT"
+            echo "issue_number=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          FINGERPRINT="$(printf '%s' "${UPSTREAM_REPO}|${UPSTREAM_TAG}|${AHEAD}|${BEHIND}|${DIFFSTAT}" | sha256sum | awk '{print $1}')"
+          MARKER="<!-- upstream-monitor:fingerprint:${FINGERPRINT} -->"
+
           BODY=$(cat <<MSG
-A new upstream release was detected.
+          A new upstream release was detected.
 
-- Upstream repo: https://github.com/${UPSTREAM_REPO}
-- Upstream release tag: ${UPSTREAM_TAG}
-- Compare URL: https://github.com/${REPO}/compare/${UPSTREAM_TAG}...${GITHUB_REF_NAME}
+          - Upstream repo: https://github.com/${UPSTREAM_REPO}
+          - Upstream release tag: ${UPSTREAM_TAG}
+          - Compare URL: https://github.com/${REPO}/compare/${UPSTREAM_TAG}...${BRANCH_NAME}
 
-Current codebase comparison summary against this repo branch (**${GITHUB_REF_NAME}**):
+          Current codebase comparison summary against this repo branch (**${BRANCH_NAME}**):
 
-- Commits ahead of upstream tag: **${AHEAD}**
-- Commits behind upstream tag: **${BEHIND}**
-- Diff shortstat: **${DIFFSTAT}**
+          - Commits ahead of upstream tag: **${AHEAD}**
+          - Commits behind upstream tag: **${BEHIND}**
+          - Diff shortstat: **${DIFFSTAT}**
 
-Checklist:
-- [ ] Review upstream release notes
-- [ ] Decide whether to cherry-pick/port relevant changes
-- [ ] Close this issue when triage is complete
-MSG
-)
+          Checklist:
+          - [ ] Review upstream release notes
+          - [ ] Decide whether to cherry-pick/port relevant changes
+          - [ ] Mark the upstream tag as resolved in ".github/upstream-release-resolved-tags.txt"
+          - [ ] Close this issue when triage is complete
+
+          ${MARKER}
+          MSG
+          )
 
           if [ -n "$OPEN_ISSUE_NUMBER" ]; then
-            gh issue comment "$OPEN_ISSUE_NUMBER" --repo "$REPO" --body "$BODY"
+            LAST_MARKER="$(gh issue view "$OPEN_ISSUE_NUMBER" --repo "$REPO" --comments --json comments --jq '.comments[-1].body // ""' | sed -n 's/.*upstream-monitor:fingerprint:\([a-f0-9]\{64\}\).*/\1/p')"
+            if [ "$FORCE" != "true" ] && [ "$LAST_MARKER" = "$FINGERPRINT" ]; then
+              echo "action=skipped_duplicate_update" >> "$GITHUB_OUTPUT"
+              echo "issue_number=$OPEN_ISSUE_NUMBER" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            gh issue comment "$OPEN_ISSUE_NUMBER" --repo "$REPO" --body "$BODY" >/dev/null
+            echo "action=updated" >> "$GITHUB_OUTPUT"
+            echo "issue_number=$OPEN_ISSUE_NUMBER" >> "$GITHUB_OUTPUT"
           else
-            gh issue create --repo "$REPO" --title "$TITLE" --body "$BODY"
+            CREATED="$(gh issue create --repo "$REPO" --title "$TITLE" --body "$BODY" --json number --jq '.number')"
+            echo "action=created" >> "$GITHUB_OUTPUT"
+            echo "issue_number=$CREATED" >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Publish monitor summary
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "## Upstream monitor summary"
+            echo ""
+            echo "- Upstream repo: \\`${{ steps.cfg.outputs.upstream_repo }}\\`"
+            echo "- Upstream tag: \\`${{ steps.upstream.outputs.tag || 'n/a' }}\\`"
+            echo "- Force mode: \\`${{ steps.cfg.outputs.force }}\\`"
+            echo "- Release selection skip: \\`${{ steps.upstream.outputs.skip || 'false' }}\\`"
+            echo "- Release selection reason: \\`${{ steps.upstream.outputs.skip_reason || 'n/a' }}\\`"
+            echo "- Resolved-list skip: \\`${{ steps.resolved.outputs.skip || 'false' }}\\`"
+            echo "- Resolved-list reason: \\`${{ steps.resolved.outputs.reason || 'n/a' }}\\`"
+            echo "- Diff skip: \\`${{ steps.diff.outputs.skip || 'false' }}\\`"
+            echo "- Diff skip reason: \\`${{ steps.diff.outputs.skip_reason || 'n/a' }}\\`"
+            echo "- Ahead: \\`${{ steps.diff.outputs.ahead || 'n/a' }}\\`"
+            echo "- Behind: \\`${{ steps.diff.outputs.behind || 'n/a' }}\\`"
+            echo "- Diff shortstat: \\`${{ steps.diff.outputs.diffstat || 'n/a' }}\\`"
+            echo "- Issue action: \\`${{ steps.issue.outputs.action || 'skipped' }}\\`"
+            echo "- Issue number: \\`${{ steps.issue.outputs.issue_number || 'n/a' }}\\`"
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -1,7 +1,13 @@
-# One upstream tag per line. Exact match.
-# Tags listed here are treated as already resolved and will not create/update monitor issues.
-# Update this list when an upstream release is reviewed and completed.
+# Upstream release tags that are already triaged for this standalone repository.
+#
+# Accepted formats (exact-match only):
+#   1) <tag>
+#   2) <owner/repo>@<tag>
+#
+# Notes:
+# - Blank lines and lines starting with '#' are ignored.
+# - Use tuple format when monitoring multiple upstream repos.
+# - Remove an entry to allow future issue generation for that tag.
 
-# Baseline (current upstream release at time of standalone cutover):
-# Replace this with the exact tag if different.
+# Baseline at standalone cutover:
 v1.0.0
