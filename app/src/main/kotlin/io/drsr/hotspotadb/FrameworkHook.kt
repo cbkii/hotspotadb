@@ -431,7 +431,7 @@ object FrameworkHook {
                 return it
             }
         } catch (e: Exception) {
-            Log.w(TAG, "HotspotAdb: failed to get context from handler: $e")
+            module.log(Log.WARN, TAG, "HotspotAdb: failed to get context from handler: $e")
             null
         }
     }
