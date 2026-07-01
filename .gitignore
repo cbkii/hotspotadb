@@ -15,4 +15,4 @@
 *.fix
 *.patch
 ktlint
-.kotlin/
+.kotlin
