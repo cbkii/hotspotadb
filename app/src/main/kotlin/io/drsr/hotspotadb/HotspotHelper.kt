@@ -21,7 +21,10 @@ object HotspotHelper {
         } catch (e: NoSuchMethodException) {
             Log.w(TAG, "HotspotAdb: hotspot state check missing getWifiApState: $e")
             false
-        } catch (e: Exception) {
+        } catch (e: ReflectiveOperationException) {
+            Log.w(TAG, "HotspotAdb: failed to check hotspot state: $e")
+            false
+        } catch (e: SecurityException) {
             Log.w(TAG, "HotspotAdb: failed to check hotspot state: $e")
             false
         }
@@ -41,12 +44,18 @@ object HotspotHelper {
     private fun getApInterfaceIp(excludeIp: String? = null): String? {
         try {
             val interfaces = NetworkInterface.getNetworkInterfaces() ?: return null
-            val inspected = mutableListOf<String>()
-            val rejected = mutableListOf<String>()
+            var inspected: MutableList<String>? = null
+            var rejected: MutableList<String>? = null
+
+            if (Log.isLoggable(TAG, Log.WARN)) {
+                inspected = mutableListOf()
+                rejected = mutableListOf()
+            }
+
             for (iface in interfaces) {
-                inspected += iface.name
+                inspected?.add(iface.name)
                 if (iface.isLoopback || !iface.isUp) {
-                    rejected += "${iface.name}:loopback/down"
+                    rejected?.add("${iface.name}:loopback/down")
                     continue
                 }
                 // Explicit denylist for mobile-data, VPN, and CLAT tunnel interfaces.
@@ -59,24 +68,28 @@ object HotspotHelper {
                     iface.name.startsWith("tun") ||
                     iface.name.startsWith("clat")
                 ) {
-                    rejected += "${iface.name}:cell/vpn/clat"
+                    rejected?.add("${iface.name}:cell/vpn/clat")
                     continue
                 }
                 for (addr in iface.inetAddresses) {
                     if (addr is Inet4Address && !addr.isLoopbackAddress) {
                         val ip = addr.hostAddress ?: continue
                         if (ip == excludeIp) {
-                            rejected += "${iface.name}:station-ip($ip)"
+                            rejected?.add("${iface.name}:station-ip($ip)")
                             continue
                         }
                         Log.i(TAG, "HotspotAdb: selected hotspot interface=${iface.name} ip=$ip")
                         return ip
                     }
                 }
-                rejected += "${iface.name}:no-ipv4"
+                rejected?.add("${iface.name}:no-ipv4")
             }
-            Log.w(TAG, "HotspotAdb: no hotspot IPv4 found inspected=${inspected.joinToString()} rejected=${rejected.joinToString()}")
-        } catch (e: Exception) {
+            if (inspected != null && rejected != null) {
+                Log.w(TAG, "HotspotAdb: no hotspot IPv4 found inspected=${inspected.joinToString()} rejected=${rejected.joinToString()}")
+            }
+        } catch (e: java.net.SocketException) {
+            Log.w(TAG, "HotspotAdb: failed to get hotspot IP: $e")
+        } catch (e: SecurityException) {
             Log.w(TAG, "HotspotAdb: failed to get hotspot IP: $e")
         }
         return null

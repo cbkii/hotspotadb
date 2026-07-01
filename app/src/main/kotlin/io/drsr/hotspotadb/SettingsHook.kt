@@ -13,8 +13,8 @@ import android.provider.Settings
 import android.util.Log
 import io.github.libxposed.api.XposedModule
 import java.lang.reflect.Method
-import java.util.Collections
 import java.util.WeakHashMap
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Hooks inside the com.android.settings process.
@@ -44,11 +44,13 @@ import java.util.WeakHashMap
  */
 object SettingsHook {
     private const val ADB_WIFI_ENABLED = "adb_wifi_enabled"
+    private const val WIFI_AP_STATE_CHANGED_ACTION = "android.net.wifi.WIFI_AP_STATE_CHANGED"
 
     // Per-fragment extra data (observer, receiver, handler, context, runnable).
     // Keyed weakly so GC'd fragment instances are automatically cleaned up.
-    private val fragmentExtras: MutableMap<Any, MutableMap<String, Any?>> =
-        Collections.synchronizedMap(WeakHashMap())
+    private val fragmentExtras: MutableMap<Any, MutableMap<String, Any?>> = WeakHashMap()
+
+    private val methodCache = ConcurrentHashMap<String, Method>()
 
     fun install(
         classLoader: ClassLoader,
@@ -312,7 +314,9 @@ object SettingsHook {
                             )
                             context.startActivity(intent)
                         }
-                    } catch (e: Exception) {
+                    } catch (e: ClassNotFoundException) {
+                        module.log(Log.WARN, TAG, "failed to open Wireless Debugging screen: $e")
+                    } catch (e: android.content.ActivityNotFoundException) {
                         module.log(Log.WARN, TAG, "failed to open Wireless Debugging screen: $e")
                     }
                     true
@@ -384,7 +388,7 @@ object SettingsHook {
             context.registerReceiver(
                 receiver,
                 IntentFilter(WifiManager.WIFI_STATE_CHANGED_ACTION).apply {
-                    addAction("android.net.wifi.WIFI_AP_STATE_CHANGED")
+                    addAction(WIFI_AP_STATE_CHANGED_ACTION)
                 },
             )
             setFragmentExtra(fragment, "hotspot_adb_receiver", receiver)
@@ -417,14 +421,16 @@ object SettingsHook {
             if (observer != null) {
                 try {
                     context.contentResolver.unregisterContentObserver(observer)
-                } catch (e: Exception) {
+                } catch (e: SecurityException) {
+                    Log.d(TAG, "$TAG: unregisterContentObserver failed: $e")
+                } catch (e: IllegalArgumentException) {
                     Log.d(TAG, "$TAG: unregisterContentObserver failed: $e")
                 }
             }
             if (receiver != null) {
                 try {
                     context.unregisterReceiver(receiver)
-                } catch (e: Exception) {
+                } catch (e: IllegalArgumentException) {
                     Log.d(TAG, "$TAG: unregisterReceiver failed: $e")
                 }
             }
@@ -499,20 +505,26 @@ object SettingsHook {
         vararg args: Any?,
     ): Any? =
         try {
+            val cacheKey = "${obj.javaClass.name}#$name#${args.joinToString { it?.javaClass?.name ?: "null" }}"
             val method =
-                obj.javaClass.methods.firstOrNull { m ->
-                    m.name == name &&
-                        m.parameterCount == args.size &&
-                        args.indices.all { i ->
-                            val param = m.parameterTypes[i]
-                            val arg = args[i]
-                            arg == null || param.isInstance(arg) || isPrimitiveCompatible(param, arg)
-                        }
-                } ?: throw NoSuchMethodException(
-                    "${obj.javaClass.name}.$name(${args.joinToString { it?.javaClass?.simpleName ?: "null" }})",
-                )
+                methodCache.getOrPut(cacheKey) {
+                    obj.javaClass.methods.firstOrNull { m ->
+                        m.name == name &&
+                            m.parameterCount == args.size &&
+                            args.indices.all { i ->
+                                val param = m.parameterTypes[i]
+                                val arg = args[i]
+                                arg == null || param.isInstance(arg) || isPrimitiveCompatible(param, arg)
+                            }
+                    } ?: throw NoSuchMethodException(
+                        "${obj.javaClass.name}.$name(${args.joinToString { it?.javaClass?.simpleName ?: "null" }})",
+                    )
+                }
             method.invoke(obj, *args)
-        } catch (e: Exception) {
+        } catch (e: ReflectiveOperationException) {
+            Log.w(TAG, "$TAG: callMethod($name) failed: $e")
+            null
+        } catch (e: IllegalArgumentException) {
             Log.w(TAG, "$TAG: callMethod($name) failed: $e")
             null
         }
