@@ -49,6 +49,17 @@ This module changes that behavior so Wireless Debugging can stay available when 
 4. Connect:
    - `adb connect <ip>:<port>`
 
+## Host-to-client ADB over hotspot
+
+You can also connect *from* the Pixel host *to* another Android device connected to the hotspot.
+The hotspotadb core module enables the host's own Wireless Debugging over hotspot, while host-to-client control additionally requires a local adb client on the host (like Termux) and Wireless Debugging enabled on the target client device.
+
+1. Ensure the target client device is connected to the Pixel host's hotspot.
+2. Enable Wireless Debugging on the target client device.
+3. Use Termux on the Pixel host to pair and connect to the client device's IP and port (e.g., `adb pair <client_ip>:<pairing_port>` and `adb connect <client_ip>:<port>`). Note: automatic discovery may not work over hotspots, direct IP:port is required.
+
+See the [Host-to-Client ADB Architecture Note](docs/host-to-client-adb.md) for full details, and use the included diagnostic script `tools/hotspotadb-host-client-diagnostics.sh` if you need help finding IPs or checking adb readiness.
+
 ## Troubleshooting (quick)
 
 Check logs:
