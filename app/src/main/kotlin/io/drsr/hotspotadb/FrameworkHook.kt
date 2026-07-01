@@ -454,7 +454,7 @@ object FrameworkHook {
                     manager?.let { ReflectionCompat.getFieldValueByName(it, "mContext") as? Context }
                 }
         } catch (e: Exception) {
-            Log.w(TAG, "HotspotAdb: failed to get context from AdbWifiNetworkMonitor: $e")
+            module.log(Log.WARN, TAG, "HotspotAdb: failed to get context from handler: $e")
             null
         }
     }
