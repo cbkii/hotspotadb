@@ -20,54 +20,65 @@ The target/client Android device (the one you are connecting *to*) must have Wir
 ### Host IP vs Client IP
 When Wireless Debugging is enabled on the Pixel host (while running `hotspotadb`), the IP address shown on the Pixel's Wireless Debugging screen is the *host AP IP* (the IP of the hotspot interface itself). It is *not* the IP of the target client device. You must look at the target client device's screen to find its assigned IP address on the hotspot network, as well as its pairing and connect ports.
 
-### The mDNS Limitations
-Modern Android Wireless Debugging relies heavily on mDNS for discovery. However, mDNS broadcast and discovery are often unreliable or blocked over hotspot/SoftAP network interfaces due to tethering routing rules or firewall configurations.
-Because of this, **direct IP:port pairing and connecting is the required and most reliable fallback method.**
+### Android 16 and mDNS Limitations
+For this workflow, Android 16 is explicitly treated as using the current Wireless Debugging pairing/connect model (pre-ADB-Wi-Fi-2.0, which is planned for Android 17+).
 
-### Tested Termux Command Sequence
+Modern Android Wireless Debugging relies heavily on mDNS for discovery (`_adb-tls-pairing._tcp` and `_adb-tls-connect._tcp`). However, mDNS broadcast and discovery are often unreliable or blocked over hotspot/SoftAP network interfaces due to tethering routing rules or firewall configurations. Empty mDNS output means the network does not support automatic discovery.
 
-This sequence runs on the Pixel host device using Termux:
+Because of this, **direct IP:port pairing and connecting is the primary and most reliable method.** mDNS is considered an optional diagnostic tool.
 
-1. **Install ADB:**
+### Primary Termux Command Sequence
+
+This sequence runs on the Pixel host device using Termux. Do not rely on mDNS automatic discovery.
+
+1. **Ensure ADB is installed:**
    ```bash
    pkg install android-tools
    ```
 
-2. **Verify ADB availability:**
-   ```bash
-   adb version
-   ```
-
-3. **Start the ADB server (if not already running):**
-   ```bash
-   adb start-server
-   ```
-
-4. **Pair to the target device:**
+2. **Pair to the target device:**
    Find the IP, pairing port, and pairing code on the target device's "Pair device with pairing code" screen.
    ```bash
    adb pair <target_client_ip>:<pairing_port>
    ```
    *You will be prompted to enter the pairing code.*
 
-5. **Connect to the target device:**
-   Find the connection port on the target device's main Wireless Debugging screen.
+3. **Connect to the target device:**
+   Find the connection port on the target device's main Wireless Debugging screen (this port is different from the pairing port).
    ```bash
    adb connect <target_client_ip>:<connect_port>
    ```
 
-6. **Verify the connection:**
+4. **Verify the connection:**
    ```bash
    adb devices -l
    ```
-   The target device should be listed in the `device` state.
 
-7. **Recovery/Reset (if needed):**
-   If the connection hangs or fails unpredictably:
-   ```bash
-   adb kill-server
-   adb start-server
-   ```
+*Use the included `tools/hotspotadb-adb-netcheck.sh` script to streamline this process safely.*
+
+### Troubleshooting Decision Tree
+
+If you encounter issues during the host-to-client connection:
+
+#### mDNS empty
+* **Meaning:** Automatic discovery is unavailable on this network.
+* **Action:** Use direct IP:port from the target's Wireless Debugging screen. Do not treat this as fatal.
+
+#### Pairing port unreachable
+* **Likely causes:** Wrong target IP, target not connected to Pixel hotspot, Wireless Debugging pairing dialog closed, pairing port rotated, or a hotspot firewall/routing issue.
+* **Action:** Reopen the target pairing dialog, re-check the target IP, run the `hotspotadb-adb-netcheck.sh` helper, and collect logs if still failing.
+
+#### Pair succeeds but connect fails
+* **Likely causes:** Using the pairing port instead of the connect port, the connect port changed, the target's Wireless Debugging toggled/restarted, or stale adb server state.
+* **Action:** Use the connect port from the main Wireless Debugging screen (not the pairing dialog), run `adb kill-server && adb start-server`, and retry `adb connect <ip>:<connect_port>`.
+
+#### Connected but unauthorised/offline
+* **Likely causes:** Stale adb key, target prompt not accepted, or adb server state mismatch.
+* **Action:** Accept the prompt on the target device. Revoke debugging authorisations only as a later recovery step. Restart the adb server and reconnect.
+
+#### Pixel host Wireless Debugging disables itself when hotspot state changes
+* **Likely causes:** Android 16 framework network callback path not fully suppressed, hook not installed due to class/signature drift, or context extraction failure.
+* **Action:** Collect `HotspotAdb`, `adbd`, and `AdbDebuggingManager` logs. Inspect the Xposed/LSPosed hook install logs to fix hook selection rather than masking the symptom.
 
 ### Limitations and Non-Goals
 * **No automatic discovery:** Due to mDNS limitations on hotspots, automatic discovery is not guaranteed. Manual IP:port entry is the supported method.

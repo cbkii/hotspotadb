@@ -311,18 +311,23 @@ object FrameworkHook {
             module.deoptimize(onLost)
             module.hook(onLost).intercept { chain ->
                 val ctx = getContextFromMonitor(chain.getThisObject())
-                if (ctx != null && HotspotHelper.isHotspotActive(ctx)) {
-                    module.log(
-                        Log.INFO,
-                        TAG,
-                        "blocked AdbWifiNetworkMonitor.onLost (hotspot active; framework-driven disable suppressed)",
-                    )
-                    null
+                if (ctx != null) {
+                    if (HotspotHelper.isHotspotActive(ctx)) {
+                        module.log(
+                            Log.INFO,
+                            TAG,
+                            "blocked AdbWifiNetworkMonitor.onLost (hotspot active; framework-driven disable suppressed)",
+                        )
+                        null
+                    } else {
+                        chain.proceed()
+                    }
                 } else {
+                    module.log(Log.WARN, TAG, "HotspotAdb: AdbWifiNetworkMonitor.onLost context extraction failed; pass-through")
                     chain.proceed()
                 }
             }
-            module.log(Log.INFO, TAG, "HotspotAdb: hooked AdbWifiNetworkMonitor.onLost")
+            module.log(Log.INFO, TAG, "HotspotAdb: hooked AdbWifiNetworkMonitor.onLost (${clazz.name})")
             installed = true
         } catch (t: Throwable) {
             module.log(Log.WARN, TAG, "HotspotAdb: failed to hook AdbWifiNetworkMonitor.onLost: $t")
@@ -342,14 +347,23 @@ object FrameworkHook {
                 module.deoptimize(onCaps)
                 module.hook(onCaps).intercept { chain ->
                     val ctx = getContextFromMonitor(chain.getThisObject())
-                    if (ctx != null && HotspotHelper.isHotspotActive(ctx)) {
-                        module.log(Log.INFO, TAG, "HotspotAdb: blocked AdbWifiNetworkMonitor.onCapabilitiesChanged (hotspot active)")
-                        null
+                    if (ctx != null) {
+                        if (HotspotHelper.isHotspotActive(ctx)) {
+                            module.log(Log.INFO, TAG, "HotspotAdb: blocked AdbWifiNetworkMonitor.onCapabilitiesChanged (hotspot active)")
+                            null
+                        } else {
+                            chain.proceed()
+                        }
                     } else {
+                        module.log(
+                            Log.WARN,
+                            TAG,
+                            "HotspotAdb: AdbWifiNetworkMonitor.onCapabilitiesChanged context extraction failed; pass-through",
+                        )
                         chain.proceed()
                     }
                 }
-                module.log(Log.INFO, TAG, "HotspotAdb: hooked AdbWifiNetworkMonitor.onCapabilitiesChanged")
+                module.log(Log.INFO, TAG, "HotspotAdb: hooked AdbWifiNetworkMonitor.onCapabilitiesChanged (${clazz.name})")
                 installed = true
             } catch (t: Throwable) {
                 module.log(Log.WARN, TAG, "HotspotAdb: failed to hook AdbWifiNetworkMonitor.onCapabilitiesChanged: $t")
