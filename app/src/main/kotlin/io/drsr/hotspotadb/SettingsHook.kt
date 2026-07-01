@@ -13,8 +13,8 @@ import android.provider.Settings
 import android.util.Log
 import io.github.libxposed.api.XposedModule
 import java.lang.reflect.Method
+import java.util.Collections
 import java.util.WeakHashMap
-import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Hooks inside the com.android.settings process.
@@ -48,9 +48,17 @@ object SettingsHook {
 
     // Per-fragment extra data (observer, receiver, handler, context, runnable).
     // Keyed weakly so GC'd fragment instances are automatically cleaned up.
-    private val fragmentExtras: MutableMap<Any, MutableMap<String, Any?>> = WeakHashMap()
+    private val fragmentExtras: MutableMap<Any, MutableMap<String, Any?>> =
+        Collections.synchronizedMap(WeakHashMap())
 
-    private val methodCache = ConcurrentHashMap<String, Method>()
+    private const val METHOD_CACHE_MAX_SIZE = 256
+
+    private val methodCache: MutableMap<String, Method> =
+        Collections.synchronizedMap(
+            object : java.util.LinkedHashMap<String, Method>(METHOD_CACHE_MAX_SIZE, 0.75f, true) {
+                override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Method>?): Boolean = size > METHOD_CACHE_MAX_SIZE
+            },
+        )
 
     fun install(
         classLoader: ClassLoader,
@@ -314,10 +322,12 @@ object SettingsHook {
                             )
                             context.startActivity(intent)
                         }
-                    } catch (e: ClassNotFoundException) {
-                        module.log(Log.WARN, TAG, "failed to open Wireless Debugging screen: $e")
                     } catch (e: android.content.ActivityNotFoundException) {
-                        module.log(Log.WARN, TAG, "failed to open Wireless Debugging screen: $e")
+                        module.log(Log.WARN, TAG, "HotspotAdb: failed to open Wireless Debugging screen: $e")
+                    } catch (e: SecurityException) {
+                        module.log(Log.WARN, TAG, "HotspotAdb: failed to open Wireless Debugging screen: $e")
+                    } catch (e: Exception) {
+                        module.log(Log.WARN, TAG, "HotspotAdb: failed to open Wireless Debugging screen: $e")
                     }
                     true
                 }
@@ -406,7 +416,7 @@ object SettingsHook {
         fragment: Any,
         module: XposedModule,
     ) {
-        val extras = fragmentExtras.remove(fragment) ?: return
+        val extras = removeFragmentExtras(fragment) ?: return
 
         val context = extras["hotspot_adb_context"] as? Context
         val observer = extras["hotspot_adb_observer"] as? ContentObserver
@@ -422,16 +432,16 @@ object SettingsHook {
                 try {
                     context.contentResolver.unregisterContentObserver(observer)
                 } catch (e: SecurityException) {
-                    Log.d(TAG, "$TAG: unregisterContentObserver failed: $e")
+                    Log.d(TAG, "HotspotAdb: unregisterContentObserver failed: $e")
                 } catch (e: IllegalArgumentException) {
-                    Log.d(TAG, "$TAG: unregisterContentObserver failed: $e")
+                    Log.d(TAG, "HotspotAdb: unregisterContentObserver failed: $e")
                 }
             }
             if (receiver != null) {
                 try {
                     context.unregisterReceiver(receiver)
                 } catch (e: IllegalArgumentException) {
-                    Log.d(TAG, "$TAG: unregisterReceiver failed: $e")
+                    Log.d(TAG, "HotspotAdb: unregisterReceiver failed: $e")
                 }
             }
         }
@@ -507,25 +517,27 @@ object SettingsHook {
         try {
             val cacheKey = "${obj.javaClass.name}#$name#${args.joinToString { it?.javaClass?.name ?: "null" }}"
             val method =
-                methodCache.getOrPut(cacheKey) {
-                    obj.javaClass.methods.firstOrNull { m ->
-                        m.name == name &&
-                            m.parameterCount == args.size &&
-                            args.indices.all { i ->
-                                val param = m.parameterTypes[i]
-                                val arg = args[i]
-                                arg == null || param.isInstance(arg) || isPrimitiveCompatible(param, arg)
-                            }
-                    } ?: throw NoSuchMethodException(
-                        "${obj.javaClass.name}.$name(${args.joinToString { it?.javaClass?.simpleName ?: "null" }})",
-                    )
+                synchronized(methodCache) {
+                    methodCache.getOrPut(cacheKey) {
+                        obj.javaClass.methods.firstOrNull { m ->
+                            m.name == name &&
+                                m.parameterCount == args.size &&
+                                args.indices.all { i ->
+                                    val param = m.parameterTypes[i]
+                                    val arg = args[i]
+                                    arg == null || param.isInstance(arg) || isPrimitiveCompatible(param, arg)
+                                }
+                        } ?: throw NoSuchMethodException(
+                            "${obj.javaClass.name}.$name(${args.joinToString { it?.javaClass?.simpleName ?: "null" }})",
+                        )
+                    }
                 }
             method.invoke(obj, *args)
         } catch (e: ReflectiveOperationException) {
-            Log.w(TAG, "$TAG: callMethod($name) failed: $e")
+            Log.w(TAG, "HotspotAdb: callMethod($name) failed: $e")
             null
         } catch (e: IllegalArgumentException) {
-            Log.w(TAG, "$TAG: callMethod($name) failed: $e")
+            Log.w(TAG, "HotspotAdb: callMethod($name) failed: $e")
             null
         }
 
@@ -569,13 +581,23 @@ object SettingsHook {
         key: String,
         value: Any?,
     ) {
-        fragmentExtras.getOrPut(obj) { mutableMapOf() }[key] = value
+        synchronized(fragmentExtras) {
+            fragmentExtras.getOrPut(obj) { mutableMapOf() }[key] = value
+        }
     }
 
     private fun getFragmentExtra(
         obj: Any,
         key: String,
-    ): Any? = fragmentExtras[obj]?.get(key)
+    ): Any? =
+        synchronized(fragmentExtras) {
+            fragmentExtras[obj]?.get(key)
+        }
+
+    private fun removeFragmentExtras(obj: Any): MutableMap<String, Any?>? =
+        synchronized(fragmentExtras) {
+            fragmentExtras.remove(obj)
+        }
 
     private const val TAG = HotspotAdbModule.TAG
 }

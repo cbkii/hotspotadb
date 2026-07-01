@@ -122,10 +122,10 @@ object FrameworkHook {
                 module.log(Log.INFO, TAG, "getCurrentWifiApInfo → synthetic (bssid=$SYNTHETIC_BSSID ssid=$ssid)")
                 info
             } catch (e: ReflectiveOperationException) {
-                module.log(Log.ERROR, TAG, "failed to create AdbConnectionInfo: $e")
+                module.log(Log.ERROR, TAG, "HotspotAdb: failed to create AdbConnectionInfo: $e")
                 null
             } catch (e: IllegalArgumentException) {
-                module.log(Log.ERROR, TAG, "failed to create AdbConnectionInfo: $e")
+                module.log(Log.ERROR, TAG, "HotspotAdb: failed to create AdbConnectionInfo: $e")
                 null
             }
         }
@@ -324,10 +324,8 @@ object FrameworkHook {
             }
             module.log(Log.INFO, TAG, "hooked AdbWifiNetworkMonitor.onLost")
             installed = true
-        } catch (e: NoSuchMethodException) {
-            module.log(Log.WARN, TAG, "failed to hook AdbWifiNetworkMonitor.onLost: $e")
-        } catch (e: SecurityException) {
-            module.log(Log.WARN, TAG, "failed to hook AdbWifiNetworkMonitor.onLost: $e")
+        } catch (t: Throwable) {
+            module.log(Log.WARN, TAG, "HotspotAdb: failed to hook AdbWifiNetworkMonitor.onLost: $t")
         }
 
         // onCapabilitiesChanged(Network, NetworkCapabilities): fired when network capabilities
@@ -353,10 +351,8 @@ object FrameworkHook {
                 }
                 module.log(Log.INFO, TAG, "hooked AdbWifiNetworkMonitor.onCapabilitiesChanged")
                 installed = true
-            } catch (e: NoSuchMethodException) {
-                module.log(Log.WARN, TAG, "failed to hook AdbWifiNetworkMonitor.onCapabilitiesChanged: $e")
-            } catch (e: SecurityException) {
-                module.log(Log.WARN, TAG, "failed to hook AdbWifiNetworkMonitor.onCapabilitiesChanged: $e")
+            } catch (t: Throwable) {
+                module.log(Log.WARN, TAG, "HotspotAdb: failed to hook AdbWifiNetworkMonitor.onCapabilitiesChanged: $t")
             }
         } else {
             module.log(Log.WARN, TAG, "android.net.NetworkCapabilities not found; onCapabilitiesChanged hook skipped")
@@ -395,11 +391,8 @@ object FrameworkHook {
             }
             module.log(Log.INFO, TAG, "hooked BroadcastReceiver.onReceive via $label")
             true
-        } catch (e: NoSuchMethodException) {
-            module.log(Log.DEBUG, TAG, "failed to hook onReceive in ${clazz.name}: $e")
-            false
-        } catch (e: SecurityException) {
-            module.log(Log.DEBUG, TAG, "failed to hook onReceive in ${clazz.name}: $e")
+        } catch (t: Throwable) {
+            module.log(Log.DEBUG, TAG, "HotspotAdb: failed to hook onReceive in ${clazz.name}: $t")
             false
         }
     }
@@ -437,11 +430,8 @@ object FrameworkHook {
                 module.log(Log.DEBUG, TAG, "context extraction: manager.mContext via ${outer?.javaClass?.name}")
                 return it
             }
-        } catch (e: SecurityException) {
-            Log.w(TAG, "$TAG: failed to get context from handler: $e")
-            null
-        } catch (e: ReflectiveOperationException) {
-            Log.w(TAG, "$TAG: failed to get context from handler: $e")
+        } catch (e: Exception) {
+            Log.w(TAG, "HotspotAdb: failed to get context from handler: $e")
             null
         }
     }
@@ -463,11 +453,8 @@ object FrameworkHook {
                             ?: ReflectionCompat.getFieldValueByName(monitor, "this\$0")
                     manager?.let { ReflectionCompat.getFieldValueByName(it, "mContext") as? Context }
                 }
-        } catch (e: SecurityException) {
-            Log.w(TAG, "$TAG: failed to get context from AdbWifiNetworkMonitor: $e")
-            null
-        } catch (e: ReflectiveOperationException) {
-            Log.w(TAG, "$TAG: failed to get context from AdbWifiNetworkMonitor: $e")
+        } catch (e: Exception) {
+            Log.w(TAG, "HotspotAdb: failed to get context from AdbWifiNetworkMonitor: $e")
             null
         }
     }

@@ -10,24 +10,23 @@ object HotspotHelper {
     private const val TAG = HotspotAdbModule.TAG
     private const val WIFI_AP_STATE_ENABLED = 13
 
-    fun isHotspotActive(context: Context): Boolean =
-        try {
-            val wifiManager = context.getSystemService(Context.WIFI_SERVICE) as WifiManager
+    fun isHotspotActive(context: Context): Boolean {
+        return try {
+            val wifiManager = context.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+            if (wifiManager == null) {
+                Log.w(TAG, "HotspotAdb: WIFI_SERVICE not found or wrong type")
+                return false
+            }
             val method = wifiManager.javaClass.getMethod("getWifiApState")
             val state = method.invoke(wifiManager) as Int
             val active = state == WIFI_AP_STATE_ENABLED
             Log.d(TAG, "HotspotAdb: hotspot state check method=getWifiApState state=$state expected=$WIFI_AP_STATE_ENABLED active=$active")
             active
-        } catch (e: NoSuchMethodException) {
-            Log.w(TAG, "HotspotAdb: hotspot state check missing getWifiApState: $e")
-            false
-        } catch (e: ReflectiveOperationException) {
-            Log.w(TAG, "HotspotAdb: failed to check hotspot state: $e")
-            false
-        } catch (e: SecurityException) {
+        } catch (e: Exception) {
             Log.w(TAG, "HotspotAdb: failed to check hotspot state: $e")
             false
         }
+    }
 
     /**
      * Returns the IP address of the hotspot (AP) interface.
@@ -87,9 +86,7 @@ object HotspotHelper {
             if (inspected != null && rejected != null) {
                 Log.w(TAG, "HotspotAdb: no hotspot IPv4 found inspected=${inspected.joinToString()} rejected=${rejected.joinToString()}")
             }
-        } catch (e: java.net.SocketException) {
-            Log.w(TAG, "HotspotAdb: failed to get hotspot IP: $e")
-        } catch (e: SecurityException) {
+        } catch (e: Exception) {
             Log.w(TAG, "HotspotAdb: failed to get hotspot IP: $e")
         }
         return null
