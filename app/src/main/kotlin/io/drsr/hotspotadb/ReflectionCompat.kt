@@ -18,12 +18,12 @@ object ReflectionCompat {
         names.forEachIndexed { index, name ->
             val clazz = tryFindClass(name, classLoader)
             if (clazz != null) {
-                module.log(Log.INFO, TAG, "$label class selected [${index + 1}/${names.size}]: $name")
+                module.log(Log.INFO, TAG, "HotspotAdb: $label class selected [${index + 1}/${names.size}]: $name")
                 return clazz
             }
-            module.log(Log.DEBUG, TAG, "$label class candidate absent: $name")
+            module.log(Log.DEBUG, TAG, "HotspotAdb: $label class candidate absent: $name")
         }
-        module.log(Log.WARN, TAG, "$label class not found in ${names.size} candidate(s)")
+        module.log(Log.WARN, TAG, "HotspotAdb: $label class not found in ${names.size} candidate(s)")
         return null
     }
 
@@ -42,13 +42,13 @@ object ReflectionCompat {
             val method = runCatching { cls.getDeclaredMethod(name, *params).also { it.isAccessible = true } }.getOrNull()
             if (method != null) {
                 val origin = if (cls == clazz) "declared" else "inherited from ${cls.name}"
-                module.log(Log.INFO, TAG, "$label method selected ($origin): ${method.toGenericString()}")
+                module.log(Log.INFO, TAG, "HotspotAdb: $label method selected ($origin): ${method.toGenericString()}")
                 return method
             }
             if (!includeInherited) break
             cls = cls.superclass ?: break
         }
-        module.log(Log.WARN, TAG, "$label method missing: ${clazz.name}#$name(${params.joinToString { it.simpleName }})")
+        module.log(Log.WARN, TAG, "HotspotAdb: $label method missing: ${clazz.name}#$name(${params.joinToString { it.simpleName }})")
         return null
     }
 
@@ -60,10 +60,10 @@ object ReflectionCompat {
     ): Constructor<*>? {
         val ctor = runCatching { clazz.getDeclaredConstructor(*params).also { it.isAccessible = true } }.getOrNull()
         if (ctor != null) {
-            module.log(Log.INFO, TAG, "$label constructor selected: ${ctor.toGenericString()}")
+            module.log(Log.INFO, TAG, "HotspotAdb: $label constructor selected: ${ctor.toGenericString()}")
             return ctor
         }
-        module.log(Log.DEBUG, TAG, "$label constructor missing: ${clazz.name}(${params.joinToString { it.simpleName }})")
+        module.log(Log.DEBUG, TAG, "HotspotAdb: $label constructor missing: ${clazz.name}(${params.joinToString { it.simpleName }})")
         return null
     }
 

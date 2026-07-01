@@ -99,20 +99,20 @@ object SettingsHook {
             if (result == false) {
                 val context = chain.getArg(0) as? Context ?: return@intercept result
                 val hotspotActive = HotspotHelper.isHotspotActive(context)
-                module.log(Log.INFO, TAG, "isWifiConnected original=$result hotspotActive=$hotspotActive")
+                module.log(Log.INFO, TAG, "HotspotAdb: isWifiConnected original=$result hotspotActive=$hotspotActive")
                 if (hotspotActive) {
-                    module.log(Log.INFO, TAG, "isWifiConnected decision=changed(true)")
+                    module.log(Log.INFO, TAG, "HotspotAdb: isWifiConnected decision=changed(true)")
                     true
                 } else {
-                    module.log(Log.INFO, TAG, "isWifiConnected decision=pass-through(false)")
+                    module.log(Log.INFO, TAG, "HotspotAdb: isWifiConnected decision=pass-through(false)")
                     result
                 }
             } else {
-                module.log(Log.INFO, TAG, "isWifiConnected original=$result decision=pass-through")
+                module.log(Log.INFO, TAG, "HotspotAdb: isWifiConnected original=$result decision=pass-through")
                 result
             }
         }
-        module.log(Log.INFO, TAG, "hooked ${clazz.simpleName}.isWifiConnected")
+        module.log(Log.INFO, TAG, "HotspotAdb: hooked ${clazz.simpleName}.isWifiConnected")
     }
 
     // ---- getIpv4Address ----
@@ -144,10 +144,10 @@ object SettingsHook {
                     ?: return@intercept chain.proceed()
             if (!HotspotHelper.isHotspotActive(context)) return@intercept chain.proceed()
             val ip = HotspotHelper.getHotspotIpAddress(context) ?: return@intercept chain.proceed()
-            module.log(Log.INFO, TAG, "getIpv4Address → $ip (hotspot AP interface)")
+            module.log(Log.INFO, TAG, "HotspotAdb: getIpv4Address → $ip (hotspot AP interface)")
             ip
         }
-        module.log(Log.INFO, TAG, "hooked AdbIpAddressPreferenceController.getIpv4Address")
+        module.log(Log.INFO, TAG, "HotspotAdb: hooked AdbIpAddressPreferenceController.getIpv4Address")
     }
 
     // ---- WifiTetherSettings.onStart / onStop ----
@@ -177,23 +177,23 @@ object SettingsHook {
             try {
                 injectWirelessDebuggingPref(chain.getThisObject()!!, classLoader, module)
             } catch (e: Throwable) {
-                module.log(Log.ERROR, TAG, "failed to inject wireless debugging preference: $e")
+                module.log(Log.ERROR, TAG, "HotspotAdb: failed to inject wireless debugging preference: $e")
             }
             null
         }
-        module.log(Log.INFO, TAG, "hooked WifiTetherSettings.onStart")
+        module.log(Log.INFO, TAG, "HotspotAdb: hooked WifiTetherSettings.onStart")
 
         // onStop: unregister observers and cancel pending handler callbacks.
         module.hook(onStop).intercept { chain ->
             try {
                 cleanupFragment(chain.getThisObject()!!, module)
             } catch (e: Throwable) {
-                module.log(Log.ERROR, TAG, "fragment cleanup failed: $e")
+                module.log(Log.ERROR, TAG, "HotspotAdb: fragment cleanup failed: $e")
             }
             chain.proceed()
             null
         }
-        module.log(Log.INFO, TAG, "hooked WifiTetherSettings.onStop for listener cleanup")
+        module.log(Log.INFO, TAG, "HotspotAdb: hooked WifiTetherSettings.onStop for listener cleanup")
     }
 
     /**
@@ -213,12 +213,12 @@ object SettingsHook {
     ) {
         val screen =
             callMethod(fragment, "getPreferenceScreen") ?: run {
-                module.log(Log.WARN, TAG, "getPreferenceScreen returned null")
+                module.log(Log.WARN, TAG, "HotspotAdb: getPreferenceScreen returned null")
                 return
             }
         val context =
             callMethod(screen, "getContext") as? Context ?: run {
-                module.log(Log.WARN, TAG, "could not get Context from PreferenceScreen")
+                module.log(Log.WARN, TAG, "HotspotAdb: could not get Context from PreferenceScreen")
                 return
             }
 
@@ -251,7 +251,7 @@ object SettingsHook {
             tryFindClass("com.android.settingslib.PrimarySwitchPreference", classLoader)
                 ?: tryFindClass("androidx.preference.SwitchPreferenceCompat", classLoader)
                 ?: run {
-                    module.log(Log.WARN, TAG, "no usable Preference subclass found; toggle injection skipped")
+                    module.log(Log.WARN, TAG, "HotspotAdb: no usable Preference subclass found; toggle injection skipped")
                     return null
                 }
         val pref = prefClass.getConstructor(Context::class.java).newInstance(context)
@@ -271,7 +271,7 @@ object SettingsHook {
                 "androidx.preference.Preference\$OnPreferenceChangeListener",
                 classLoader,
             ) ?: run {
-                module.log(Log.WARN, TAG, "OnPreferenceChangeListener class not found; toggle will not respond")
+                module.log(Log.WARN, TAG, "HotspotAdb: OnPreferenceChangeListener class not found; toggle will not respond")
                 return null
             }
         val changeProxy =
@@ -280,7 +280,7 @@ object SettingsHook {
                 arrayOf(changeListenerClass),
             ) { _, _, args ->
                 val newValue = args!![1] as Boolean
-                module.log(Log.INFO, TAG, "user toggled wireless debugging via hotspot screen: $newValue")
+                module.log(Log.INFO, TAG, "HotspotAdb: user toggled wireless debugging via hotspot screen: $newValue")
                 Settings.Global.putInt(context.contentResolver, ADB_WIFI_ENABLED, if (newValue) 1 else 0)
                 callMethod(pref, "setSummary", getWirelessDebuggingSummary(context, newValue) as CharSequence)
                 true
@@ -335,7 +335,7 @@ object SettingsHook {
         }
 
         callMethod(screen, "addPreference", pref)
-        module.log(Log.INFO, TAG, "injected wireless debugging toggle into hotspot settings")
+        module.log(Log.INFO, TAG, "HotspotAdb: injected wireless debugging toggle into hotspot settings")
         return pref
     }
 
@@ -372,7 +372,7 @@ object SettingsHook {
                 }
             context.contentResolver.registerContentObserver(uri, false, observer)
             setFragmentExtra(fragment, "hotspot_adb_observer", observer)
-            module.log(Log.DEBUG, TAG, "registered ContentObserver for WifiTetherSettings")
+            module.log(Log.DEBUG, TAG, "HotspotAdb: registered ContentObserver for WifiTetherSettings")
         }
 
         if (getFragmentExtra(fragment, "hotspot_adb_receiver") == null) {
@@ -404,7 +404,7 @@ object SettingsHook {
             setFragmentExtra(fragment, "hotspot_adb_receiver", receiver)
             setFragmentExtra(fragment, "hotspot_adb_handler", handler)
             setFragmentExtra(fragment, "hotspot_adb_runnable", updatePref)
-            module.log(Log.DEBUG, TAG, "registered BroadcastReceiver for WifiTetherSettings")
+            module.log(Log.DEBUG, TAG, "HotspotAdb: registered BroadcastReceiver for WifiTetherSettings")
         }
     }
 
@@ -446,7 +446,7 @@ object SettingsHook {
             }
         }
 
-        module.log(Log.DEBUG, TAG, "cleaned up listeners for WifiTetherSettings")
+        module.log(Log.DEBUG, TAG, "HotspotAdb: cleaned up listeners for WifiTetherSettings")
     }
 
     // ---- Helpers ----
