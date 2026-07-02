@@ -463,7 +463,7 @@ object SettingsHook {
                 ?: HotspotHelper.getAnyWlanIp()
                 ?: return ""
         val port = getAdbWirelessPort()
-        return if (port > 0) "$ip:$port" else ip
+        return if (port > 0) "Host IP: $ip:$port" else "Host IP: $ip"
     }
 
     private fun getAdbWirelessPort(): Int =

@@ -5,6 +5,7 @@ applyTo: "app/src/main/kotlin/**/*.kt,app/src/main/AndroidManifest.xml,app/build
 This repository contains Android hook code for LSPosed/Xposed.
 
 Additional current compatibility baseline:
+
 - Treat Magisk `v30.7` as the default root-manager baseline for Android 16 work.
 - Treat Vector `v2.0` stable as the default modern framework baseline.
 - Treat libxposed API `101.0.1` as the default modern module API baseline.
@@ -28,6 +29,7 @@ When working on files matched by this instruction:
 - Do not write documentation or comments that assume an LSPosed-branded manager UX when the task is about Vector compatibility.
 
 Expected output for substantial changes:
+
 - mention the exact Android internal symbols/classes touched
 - mention branch/version assumptions
 - mention validation commands run

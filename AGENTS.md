@@ -5,6 +5,7 @@
 This repository is an Android Xposed/LSPosed module that enables native Wireless Debugging (ADB over Wi‑Fi / TLS pairing) to work when the device is acting as a Wi‑Fi hotspot, not only when it is a Wi‑Fi client.
 
 Today, the codebase is a **legacy XposedBridge module**:
+
 - dependency: `de.robv.android.xposed:api:82`
 - entrypoint: `assets/xposed_init`
 - manifest metadata: `xposedmodule`, `xposedminversion`, `xposedscope`
@@ -27,6 +28,7 @@ Treat the following upstream state as the default compatibility baseline unless 
 - **Vector troubleshooting expectation:** latest debug build is recommended for investigation, and upstream asks that bug reports be based on the latest debug build
 
 These matter for planning:
+
 - A modern migration must target **real libxposed API 101.0.1 packaging/runtime**, not legacy LSPosed metadata with renamed branding.
 - Compatibility claims should be phrased for **Vector v2.0 stable** first, then note any debug-build verification separately.
 - Do not assume an LSPosed-branded manager UX, notifications, or wording once the task is about modern Vector compatibility.
@@ -85,12 +87,14 @@ When modifying ADB/framework hooks:
 ### Expected compatibility strategy
 
 For framework-side classes, prefer patterns like:
+
 - probe multiple class names in a deterministic order
 - probe multiple hook targets for newer/older branches
 - preserve old behaviour where still valid
 - keep Android 15 compatibility unless the task explicitly allows dropping it
 
 Examples of expected migration patterns:
+
 - `AdbConnectionInfo`: try top-level class first, then legacy nested class
 - receiver/monitor logic: prefer explicit top-level classes where present; only fall back to anonymous-inner scanning for older branches
 
@@ -99,9 +103,11 @@ Examples of expected migration patterns:
 Treat these as **separate workstreams**.
 
 ### Track A — legacy XposedBridge module, improved Android 16 compatibility
+
 This is the default track.
 
 Allowed changes:
+
 - update hook targets
 - add compatibility probing
 - raise compile/target SDK where appropriate
@@ -109,9 +115,11 @@ Allowed changes:
 - keep `assets/xposed_init` and legacy Xposed entry structure
 
 ### Track B — real modern libxposed / API 101 migration
+
 Only do this if explicitly requested.
 
 This is a structural port, not a small patch. It likely requires:
+
 - replacing legacy Xposed API usage
 - moving module metadata to modern locations
 - changing entrypoint mechanics
@@ -169,6 +177,7 @@ When a task touches packaging, lifecycle, or runtime compatibility, think in ter
    - only if the task explicitly requires legacy XposedBridge/LSPosed behaviour comparison
 
 When documenting results, state clearly whether validation is aimed at:
+
 - Magisk compatibility
 - Vector stable compatibility
 - Vector latest debug-build compatibility
@@ -181,10 +190,12 @@ Do not collapse those into a vague claim like “works on LSPosed”.
 This repo has CI but no device-side automated tests. Every non-trivial change should at minimum preserve local build health.
 
 Run when relevant:
+
 - `./gradlew ktlintCheck detekt assembleDebug`
 - `./gradlew assembleRelease` for release-related edits
 
 If changing Gradle/SDK levels, verify:
+
 - build still succeeds
 - manifest metadata still matches module packaging expectations
 - generated APK is still installable as an LSPosed/Xposed module
@@ -200,6 +211,7 @@ When making compatibility edits, update docs with technical precision.
 ## Pull request / change output expectations
 
 When asked to make a change, produce:
+
 1. the code change
 2. a short rationale tied to Android internals
 3. the exact symbols/classes affected

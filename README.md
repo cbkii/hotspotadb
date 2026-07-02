@@ -49,6 +49,16 @@ This module changes that behavior so Wireless Debugging can stay available when 
 4. Connect:
    - `adb connect <ip>:<port>`
 
+## Host-to-client ADB over hotspot
+
+You can also connect _from_ the Pixel host _to_ another Android device connected to the hotspot. The hotspotadb core module enables the host's own Wireless Debugging over hotspot, while host-to-client control additionally requires a local adb client on the host (like Termux) and Wireless Debugging enabled on the target client device.
+
+1. Ensure the target client device is connected to the Pixel host's hotspot.
+2. Enable Wireless Debugging on the target client device.
+3. Use Termux on the Pixel host to pair and connect to the client device's IP and port (e.g., `adb pair <client_ip>:<pairing_port>` and `adb connect <client_ip>:<port>`). Note: automatic discovery may not work over hotspots; direct IP:port is required.
+
+See the [Host-to-Client ADB Architecture Note](docs/host-to-client-adb.md) for full details, and use the included diagnostic script `tools/hotspotadb-adb-netcheck.sh` if you need help finding IPs or checking adb readiness.
+
 ## Troubleshooting (quick)
 
 Check logs:
@@ -58,6 +68,7 @@ adb logcat -s HotspotAdb
 ```
 
 If it fails, include these in your bug report:
+
 - device model
 - Android version
 - ROM
@@ -83,16 +94,17 @@ If it fails, include these in your bug report:
 
 ## Upstream monitoring
 
-This standalone repo does not rely on GitHub fork-network status for sync awareness.
-Instead, `.github/workflows/upstream-release-monitor.yml` checks upstream releases on a schedule and opens/updates triage issues only when needed.
+This standalone repo does not rely on GitHub fork-network status for sync awareness. Instead, `.github/workflows/upstream-release-monitor.yml` checks upstream releases on a schedule and opens/updates triage issues only when needed.
 
 How suppression works:
+
 - tags listed in `.github/upstream-release-resolved-tags.txt` are skipped
 - closed issues for the same upstream tag are treated as resolved
 - unchanged reruns are deduplicated via a fingerprint marker
 - already-integrated/trivial diffs are suppressed unless force mode is used
 
 Manual run options (Actions > Upstream Release Monitor):
+
 - `upstream_repo`: override monitored upstream
 - `upstream_tag`: replay a specific tag
 - `include_prerelease`: include prereleases in auto-selection
