@@ -155,10 +155,16 @@ echo ""
 
 log "=== ADB Client Readiness ==="
 if command -v adb >/dev/null 2>&1; then
-    adb version | head -n 1 | while read -r line; do log "$line"; done
+    ADB_VERSION_OUT=$(run_bounded 5 adb version 2>/dev/null)
+    if [ -n "$ADB_VERSION_OUT" ]; then
+        printf '%s
+' "$ADB_VERSION_OUT" | head -n 1 | while read -r line; do log "$line"; done
+    else
+        warn "adb version unavailable or timed out."
+    fi
 
     # Try server-status (newer adb versions)
-    adb server-status >/dev/null 2>&1 || warn "adb server-status not supported or server down."
+    run_bounded 5 adb server-status >/dev/null 2>&1 || warn "adb server-status not supported, server down, or timed out."
 
     log "Current ADB devices:"
     run_bounded 5 adb devices -l || warn "adb devices command timed out."
@@ -193,10 +199,23 @@ if [ "$COLLECT_LOGS" = true ]; then
     echo ""
 fi
 
+nc_supports_zero_io_timeout() {
+    command -v nc >/dev/null 2>&1 || return 1
+
+    local help_out
+    help_out=$(run_bounded 3 nc -h 2>&1 || true)
+    printf '%s
+' "$help_out" | grep -Fq -- '-z' || return 1
+    printf '%s
+' "$help_out" | grep -Fq -- '-w' || return 1
+    return 0
+}
+
 check_tcp() {
     local host=$1
     local port=$2
-    if command -v nc >/dev/null 2>&1 && nc -h 2>&1 | grep -Fq '-z'; then
+
+    if nc_supports_zero_io_timeout; then
         if nc -z -w 3 "$host" "$port" >/dev/null 2>&1; then
             return 0
         fi
