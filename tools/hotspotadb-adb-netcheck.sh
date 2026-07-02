@@ -119,11 +119,11 @@ fi
 
 HAS_ROOT=false
 if command -v su >/dev/null 2>&1; then
-    if su -c id >/dev/null 2>&1; then
+    if run_bounded 3 su -c id >/dev/null 2>&1; then
         log "Root available: Yes"
         HAS_ROOT=true
     else
-        log "Root available: No (su exists but access denied)"
+        log "Root available: No (su exists but access denied or timed out)"
     fi
 else
     log "Root available: No"
@@ -180,13 +180,13 @@ if [ "$COLLECT_LOGS" = true ]; then
     log "=== Diagnostic Logs Collection ==="
     if [ "$HAS_ROOT" = true ]; then
         log "Dumpsys tethering (brief):"
-        su -c "dumpsys tethering | grep -A 10 'Tether state'" || warn "Failed to dump tethering"
+        run_bounded 5 su -c "dumpsys tethering | grep -A 10 'Tether state'" || warn "Failed to dump tethering"
 
         log "Recent HotspotAdb logcat snippets:"
-        su -c "logcat -d -s HotspotAdb | tail -n 20" || warn "Failed to fetch logcat"
+        run_bounded 5 su -c "logcat -d -s HotspotAdb | tail -n 20" || warn "Failed to fetch logcat"
 
         log "Recent adb/AdbDebuggingManager logcat snippets:"
-        su -c "logcat -d -s adbd AdbDebuggingManager | tail -n 20" || warn "Failed to fetch logcat"
+        run_bounded 5 su -c "logcat -d -s adbd AdbDebuggingManager | tail -n 20" || warn "Failed to fetch logcat"
     else
         warn "Root is required to collect dumpsys and logcat diagnostics. Skipping."
     fi
@@ -196,11 +196,13 @@ fi
 check_tcp() {
     local host=$1
     local port=$2
-    if command -v nc >/dev/null 2>&1; then
-        if nc -z -w 3 "$host" "$port"; then
+    if command -v nc >/dev/null 2>&1 && nc -h 2>&1 | grep -Fq '-z'; then
+        if nc -z -w 3 "$host" "$port" >/dev/null 2>&1; then
             return 0
         fi
-    elif run_bounded 3 bash -c "</dev/tcp/$host/$port" >/dev/null 2>&1; then
+    fi
+
+    if run_bounded 3 bash -c '</dev/tcp/$1/$2' _ "$host" "$port" >/dev/null 2>&1; then
         return 0
     fi
     return 1
@@ -216,10 +218,10 @@ if [ -n "$TARGET_IP" ]; then
             if command -v adb >/dev/null 2>&1; then
                 if [ -t 0 ]; then
                     log "Pairing with ${TARGET_IP}:${PAIR_PORT}..."
-                    run_bounded 30 adb pair "${TARGET_IP}:${PAIR_PORT}"
+                    adb pair "${TARGET_IP}:${PAIR_PORT}"
                     PAIR_RES=$?
                     if [ $PAIR_RES -ne 0 ]; then
-                        warn "Pairing failed or timed out."
+                        warn "Pairing failed."
                     else
                         log "Pairing step finished."
                     fi

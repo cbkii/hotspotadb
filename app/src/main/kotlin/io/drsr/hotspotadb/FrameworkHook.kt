@@ -305,6 +305,8 @@ object FrameworkHook {
         module.log(Log.INFO, TAG, "HotspotAdb: found AdbWifiNetworkMonitor; installing Android 16 NetworkCallback hooks")
         var installed = false
 
+        var contextExtractionWarned = false
+
         // onLost(Network): fired when the station Wi-Fi network is lost entirely.
         try {
             val onLost = clazz.getDeclaredMethod("onLost", networkClass).also { it.isAccessible = true }
@@ -316,14 +318,17 @@ object FrameworkHook {
                         module.log(
                             Log.INFO,
                             TAG,
-                            "blocked AdbWifiNetworkMonitor.onLost (hotspot active; framework-driven disable suppressed)",
+                            "HotspotAdb: blocked AdbWifiNetworkMonitor.onLost (hotspot active; framework-driven disable suppressed)",
                         )
                         null
                     } else {
                         chain.proceed()
                     }
                 } else {
-                    module.log(Log.WARN, TAG, "HotspotAdb: AdbWifiNetworkMonitor.onLost context extraction failed; pass-through")
+                    if (!contextExtractionWarned) {
+                        module.log(Log.WARN, TAG, "HotspotAdb: AdbWifiNetworkMonitor context extraction failed; pass-through")
+                        contextExtractionWarned = true
+                    }
                     chain.proceed()
                 }
             }
@@ -355,11 +360,10 @@ object FrameworkHook {
                             chain.proceed()
                         }
                     } else {
-                        module.log(
-                            Log.WARN,
-                            TAG,
-                            "HotspotAdb: AdbWifiNetworkMonitor.onCapabilitiesChanged context extraction failed; pass-through",
-                        )
+                        if (!contextExtractionWarned) {
+                            module.log(Log.WARN, TAG, "HotspotAdb: AdbWifiNetworkMonitor context extraction failed; pass-through")
+                            contextExtractionWarned = true
+                        }
                         chain.proceed()
                     }
                 }
