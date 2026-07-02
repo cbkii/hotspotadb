@@ -51,8 +51,7 @@ This module changes that behavior so Wireless Debugging can stay available when 
 
 ## Host-to-client ADB over hotspot
 
-You can also connect *from* the Pixel host *to* another Android device connected to the hotspot.
-The hotspotadb core module enables the host's own Wireless Debugging over hotspot, while host-to-client control additionally requires a local adb client on the host (like Termux) and Wireless Debugging enabled on the target client device.
+You can also connect _from_ the Pixel host _to_ another Android device connected to the hotspot. The hotspotadb core module enables the host's own Wireless Debugging over hotspot, while host-to-client control additionally requires a local adb client on the host (like Termux) and Wireless Debugging enabled on the target client device.
 
 1. Ensure the target client device is connected to the Pixel host's hotspot.
 2. Enable Wireless Debugging on the target client device.
@@ -69,6 +68,7 @@ adb logcat -s HotspotAdb
 ```
 
 If it fails, include these in your bug report:
+
 - device model
 - Android version
 - ROM
@@ -94,16 +94,17 @@ If it fails, include these in your bug report:
 
 ## Upstream monitoring
 
-This standalone repo does not rely on GitHub fork-network status for sync awareness.
-Instead, `.github/workflows/upstream-release-monitor.yml` checks upstream releases on a schedule and opens/updates triage issues only when needed.
+This standalone repo does not rely on GitHub fork-network status for sync awareness. Instead, `.github/workflows/upstream-release-monitor.yml` checks upstream releases on a schedule and opens/updates triage issues only when needed.
 
 How suppression works:
+
 - tags listed in `.github/upstream-release-resolved-tags.txt` are skipped
 - closed issues for the same upstream tag are treated as resolved
 - unchanged reruns are deduplicated via a fingerprint marker
 - already-integrated/trivial diffs are suppressed unless force mode is used
 
 Manual run options (Actions > Upstream Release Monitor):
+
 - `upstream_repo`: override monitored upstream
 - `upstream_tag`: replay a specific tag
 - `include_prerelease`: include prereleases in auto-selection

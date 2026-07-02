@@ -85,11 +85,27 @@ while [[ "$#" -gt 0 ]]; do
                 exit 1
             fi
             ;;
-        --pair) DO_PAIR=true; shift ;;
-        --connect) DO_CONNECT=true; shift ;;
-        --collect-logs) COLLECT_LOGS=true; shift ;;
-        -h|--help) print_usage; exit 0 ;;
-        *) error "Unknown parameter passed: $1"; print_usage; exit 1 ;;
+        --pair)
+            DO_PAIR=true
+            shift
+            ;;
+        --connect)
+            DO_CONNECT=true
+            shift
+            ;;
+        --collect-logs)
+            COLLECT_LOGS=true
+            shift
+            ;;
+        -h | --help)
+            print_usage
+            exit 0
+            ;;
+        *)
+            error "Unknown parameter passed: $1"
+            print_usage
+            exit 1
+            ;;
     esac
 done
 
@@ -173,9 +189,9 @@ if command -v adb >/dev/null 2>&1; then
     log "mDNS Services (optional, with ADB_MDNS=1):"
     MDNS_OUT=$(run_bounded 5 adb mdns services 2>/dev/null)
     if [ -z "$MDNS_OUT" ]; then
-         log "  mDNS services command returned empty. Automatic discovery is unavailable on this network."
+        log "  mDNS services command returned empty. Automatic discovery is unavailable on this network."
     else
-         echo "$MDNS_OUT" | while read -r line; do log "$line"; done
+        echo "$MDNS_OUT" | while read -r line; do log "$line"; done
     fi
 else
     warn "adb command not found. Please install android-tools (e.g. 'pkg install android-tools' in Termux)."

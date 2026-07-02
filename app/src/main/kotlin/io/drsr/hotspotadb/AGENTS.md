@@ -18,12 +18,14 @@ Preserve that separation unless there is a strong reason to refactor.
 ## Current runtime/framework assumptions
 
 For code in this directory, assume the important modern host stack is:
+
 - Android 16
 - Magisk `v30.7` or other recent root solution with equivalent Zygisk environment
 - Vector `v2.0` stable as the primary framework target
 - libxposed API `101.0.1` for real modern-migration work
 
 Implications:
+
 - Do not write code that depends on LSPosed-specific branding, manager package names, or UI strings.
 - For modern-track changes, use real libxposed APIs rather than legacy helper semantics hidden behind wrappers.
 - Keep logs and comments framework-neutral unless a behaviour is genuinely Vector-specific.
@@ -33,6 +35,7 @@ Implications:
 `FrameworkHook.kt` is the highest-risk file in the repo.
 
 When editing it:
+
 - verify the exact target class/method on the intended AOSP branch
 - prefer helper functions such as `findFirstClass(...)` / `hookFirstAvailable(...)` if they make branch probing clearer
 - log the selected target path
@@ -40,6 +43,7 @@ When editing it:
 - preserve hotspot-only gating
 
 For Android 16 compatibility work, expect to probe multiple candidates for:
+
 - `AdbConnectionInfo`
 - receiver / monitor classes in `com.android.server.adb`
 - any method whose ownership moved from nested to top-level classes
@@ -75,6 +79,7 @@ Do not leave raw one-off reflective literals duplicated across the file if they 
 ## Refactoring constraints
 
 Refactor only when it improves one of these:
+
 - cross-version hook selection
 - diagnosability
 - safety of reflection / fallback handling
@@ -85,6 +90,7 @@ Do not refactor purely for aesthetic reasons if it increases uncertainty around 
 ## Modern runtime compatibility notes
 
 When touching hook installation or lifecycle code, ensure the implementation remains credible under the current Magisk/Vector runtime model:
+
 - Vector is delivered as a system module installed through Magisk/KernelSU and depends on a Zygisk-capable environment.
 - Framework-side failures may be caused by host framework drift rather than app/module code; call that out explicitly in comments or summaries.
 - If the task is a modern migration, avoid leaving behind code paths that only make sense for legacy `XposedHelpers`/`XC_MethodHook` flow.
@@ -92,6 +98,7 @@ When touching hook installation or lifecycle code, ensure the implementation rem
 ## Validation expectations for code in this directory
 
 For substantial edits in this directory, aim to provide:
+
 - exact symbols changed
 - Android-version assumptions
 - whether the change is legacy-track or API-101-track

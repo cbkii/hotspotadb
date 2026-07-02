@@ -2,24 +2,24 @@ name: Upstream Release Monitor
 
 on:
   schedule:
-    - cron: '25 5 * * *'
+    - cron: "25 5 * * *"
   workflow_dispatch:
     inputs:
       upstream_repo:
-        description: 'Optional upstream repo override (owner/name)'
+        description: "Optional upstream repo override (owner/name)"
         required: false
         type: string
       upstream_tag:
-        description: 'Optional exact upstream tag to replay/verify'
+        description: "Optional exact upstream tag to replay/verify"
         required: false
         type: string
       include_prerelease:
-        description: 'Consider prereleases when selecting latest upstream release'
+        description: "Consider prereleases when selecting latest upstream release"
         required: false
         type: boolean
         default: false
       force:
-        description: 'Bypass suppression heuristics and force issue create/update path'
+        description: "Bypass suppression heuristics and force issue create/update path"
         required: false
         type: boolean
         default: false

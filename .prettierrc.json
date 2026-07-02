@@ -1,0 +1,6 @@
+{
+  "proseWrap": "never",
+  "embeddedLanguageFormatting": "off",
+  "quoteProps": "preserve",
+  "endOfLine": "lf"
+}
