@@ -35,11 +35,6 @@ object HotspotHelper {
                     "HotspotAdb: hotspot state changed to active=$active (state=$state expected=$WIFI_AP_STATE_ENABLED)",
                 )
                 lastReportedState = active
-            } else {
-                Log.d(
-                    TAG,
-                    "HotspotAdb: hotspot state check method=getWifiApState state=$state expected=$WIFI_AP_STATE_ENABLED active=$active",
-                )
             }
             active
         } catch (e: Exception) {

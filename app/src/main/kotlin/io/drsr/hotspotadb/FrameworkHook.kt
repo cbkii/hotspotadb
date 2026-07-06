@@ -235,8 +235,6 @@ object FrameworkHook {
         // Not a BroadcastReceiver; hooks onLost() and onCapabilitiesChanged().
         if (hookAdbWifiNetworkMonitor(classLoader, module, reporter)) {
             anyHookInstalled = true
-        } else {
-            reporter.report("NetworkMonitor", "AdbWifiNetworkMonitor", Status.SKIPPED, "not installed")
         }
 
         // Path B: AdbBroadcastReceiver — BroadcastReceiver (Android 16 when allowAdbWifiReconnect disabled).
@@ -307,6 +305,7 @@ object FrameworkHook {
                 "com.android.server.adb.AdbWifiNetworkMonitor",
             ) ?: run {
                 module.log(Log.DEBUG, TAG, "HotspotAdb: AdbWifiNetworkMonitor not found (Android < 16?)")
+                reporter.report("NetworkMonitor", "AdbWifiNetworkMonitor", Status.SKIPPED, "class absent")
                 return false
             }
 
