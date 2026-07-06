@@ -58,8 +58,10 @@ object FrameworkHook {
         classLoader: ClassLoader,
         module: XposedModule,
     ) {
-        hookGetCurrentWifiApInfo(classLoader, module)
-        hookNetworkMonitors(classLoader, module)
+        val reporter = HookReporter("system_server", module)
+        hookGetCurrentWifiApInfo(classLoader, module, reporter)
+        hookNetworkMonitors(classLoader, module, reporter)
+        reporter.summarize()
     }
 
     // ---- getCurrentWifiApInfo ----
@@ -67,6 +69,7 @@ object FrameworkHook {
     private fun hookGetCurrentWifiApInfo(
         classLoader: ClassLoader,
         module: XposedModule,
+        reporter: HookReporter,
     ) {
         val handlerClass =
             ReflectionCompat.findFirstClass(
@@ -74,7 +77,11 @@ object FrameworkHook {
                 module,
                 "Framework enablement handler",
                 "com.android.server.adb.AdbDebuggingManager\$AdbDebuggingHandler",
-            ) ?: return
+            )
+        if (handlerClass == null) {
+            reporter.report("Framework enablement handler", "AdbDebuggingHandler", Status.MISSING, "class not found")
+            return
+        }
 
         val method =
             ReflectionCompat.findMethod(
@@ -83,10 +90,14 @@ object FrameworkHook {
                 "Framework enablement",
                 "getCurrentWifiApInfo",
                 includeInherited = true,
-            ) ?: return
+            )
+        if (method == null) {
+            reporter.report("Framework enablement", "getCurrentWifiApInfo", Status.MISSING, "method not found")
+            return
+        }
 
         module.log(Log.INFO, TAG, "HotspotAdb: getCurrentWifiApInfo returnType=${method.returnType.name}")
-        connectionInfoCtor = resolveConnectionInfoCtor(classLoader, module, method.returnType)
+        connectionInfoCtor = resolveConnectionInfoCtor(classLoader, module, method.returnType, reporter)
 
         // Deoptimise: prevent the JIT from inlining callers (e.g. handleMessage) and
         // bypassing the hook.
@@ -129,6 +140,7 @@ object FrameworkHook {
                 null
             }
         }
+        reporter.report("Framework enablement", "getCurrentWifiApInfo", Status.INSTALLED, "hooked successfully")
         module.log(Log.INFO, TAG, "HotspotAdb: hooked AdbDebuggingHandler.getCurrentWifiApInfo")
     }
 
@@ -143,6 +155,7 @@ object FrameworkHook {
         classLoader: ClassLoader,
         module: XposedModule,
         expectedReturnType: Class<*>,
+        reporter: HookReporter,
     ): Constructor<*>? {
         ReflectionCompat.findConstructor(
             expectedReturnType,
@@ -152,6 +165,7 @@ object FrameworkHook {
             String::class.java,
         )?.let {
             module.log(Log.INFO, TAG, "HotspotAdb: AdbConnectionInfo constructor class selected: ${it.declaringClass.name}")
+            reporter.report("AdbConnectionInfo", "constructor(return-type)", Status.INSTALLED, "found in expectedReturnType")
             return it
         }
         val candidates =
@@ -180,6 +194,7 @@ object FrameworkHook {
                 )
             if (ctor != null) {
                 module.log(Log.INFO, TAG, "HotspotAdb: AdbConnectionInfo constructor class selected: ${ctor.declaringClass.name}")
+                reporter.report("AdbConnectionInfo", ctor.declaringClass.name, Status.INSTALLED, "found candidate ctor")
                 return ctor
             }
         }
@@ -188,6 +203,7 @@ object FrameworkHook {
             TAG,
             "AdbConnectionInfo constructor not found for returnType=${expectedReturnType.name}; synthetic AP info disabled",
         )
+        reporter.report("AdbConnectionInfo", "constructor", Status.MISSING, "not found")
         return null
     }
 
@@ -211,13 +227,16 @@ object FrameworkHook {
     private fun hookNetworkMonitors(
         classLoader: ClassLoader,
         module: XposedModule,
+        reporter: HookReporter,
     ) {
         var anyHookInstalled = false
 
         // Path A: AdbWifiNetworkMonitor — ConnectivityManager.NetworkCallback (Android 16 default).
         // Not a BroadcastReceiver; hooks onLost() and onCapabilitiesChanged().
-        if (hookAdbWifiNetworkMonitor(classLoader, module)) {
+        if (hookAdbWifiNetworkMonitor(classLoader, module, reporter)) {
             anyHookInstalled = true
+        } else {
+            reporter.report("NetworkMonitor", "AdbWifiNetworkMonitor", Status.SKIPPED, "not installed")
         }
 
         // Path B: AdbBroadcastReceiver — BroadcastReceiver (Android 16 when allowAdbWifiReconnect disabled).
@@ -230,7 +249,7 @@ object FrameworkHook {
                 module.log(Log.DEBUG, TAG, "HotspotAdb: $name is not a BroadcastReceiver; skipping onReceive hook")
                 continue
             }
-            if (hookOnReceive(clazz, module, "AdbBroadcastReceiver path ($name)")) {
+            if (hookOnReceive(clazz, module, "AdbBroadcastReceiver path ($name)", reporter)) {
                 anyHookInstalled = true
             }
         }
@@ -243,7 +262,7 @@ object FrameworkHook {
             for (i in 1..15) {
                 val clazz = runCatching { Class.forName("$baseName\$$i", false, classLoader) }.getOrNull() ?: continue
                 if (!BroadcastReceiver::class.java.isAssignableFrom(clazz)) continue
-                if (hookOnReceive(clazz, module, "anonymous inner class $i (Android 15)")) {
+                if (hookOnReceive(clazz, module, "anonymous inner class $i (Android 15)", reporter)) {
                     anyHookInstalled = true
                 }
             }
@@ -258,6 +277,7 @@ object FrameworkHook {
                 "WARNING: no ADB network monitor or BroadcastReceiver hook installed; " +
                     "framework-driven wireless debugging teardown will NOT be suppressed",
             )
+            reporter.report("NetworkTeardown", "all", Status.FAILED, "no suppression hooks installed")
         }
     }
 
@@ -277,6 +297,7 @@ object FrameworkHook {
     private fun hookAdbWifiNetworkMonitor(
         classLoader: ClassLoader,
         module: XposedModule,
+        reporter: HookReporter,
     ): Boolean {
         val clazz =
             ReflectionCompat.findFirstClass(
@@ -292,6 +313,7 @@ object FrameworkHook {
         val networkClass =
             ReflectionCompat.findFirstClass(classLoader, module, "NetworkCallback arg", "android.net.Network") ?: run {
                 module.log(Log.WARN, TAG, "HotspotAdb: android.net.Network not found; cannot hook AdbWifiNetworkMonitor")
+                reporter.report("NetworkMonitor", "android.net.Network", Status.MISSING, "missing Network arg class")
                 return false
             }
         val networkCapabilitiesClass =
@@ -307,18 +329,15 @@ object FrameworkHook {
 
         var contextExtractionWarned = false
 
-        // onLost(Network): fired when the station Wi-Fi network is lost entirely.
-        try {
-            val onLost = clazz.getDeclaredMethod("onLost", networkClass).also { it.isAccessible = true }
-            module.deoptimize(onLost)
-            module.hook(onLost).intercept { chain ->
-                val ctx = getContextFromMonitor(chain.getThisObject())
+        fun createInterceptor(methodName: String): (io.github.libxposed.api.XposedInterface.Chain) -> Any? =
+            { chain ->
+                val ctx = getContextFromMonitor(chain.getThisObject(), module)
                 if (ctx != null) {
                     if (HotspotHelper.isHotspotActive(ctx)) {
                         module.log(
                             Log.INFO,
                             TAG,
-                            "HotspotAdb: blocked AdbWifiNetworkMonitor.onLost (hotspot active; framework-driven disable suppressed)",
+                            "HotspotAdb: blocked AdbWifiNetworkMonitor.$methodName (hotspot active)",
                         )
                         null
                     } else {
@@ -332,10 +351,18 @@ object FrameworkHook {
                     chain.proceed()
                 }
             }
+
+        // onLost(Network): fired when the station Wi-Fi network is lost entirely.
+        try {
+            val onLost = clazz.getDeclaredMethod("onLost", networkClass).also { it.isAccessible = true }
+            module.deoptimize(onLost)
+            module.hook(onLost).intercept(createInterceptor("onLost"))
             module.log(Log.INFO, TAG, "HotspotAdb: hooked AdbWifiNetworkMonitor.onLost (${clazz.name})")
+            reporter.report("NetworkMonitor", "onLost", Status.INSTALLED, "hooked successfully")
             installed = true
         } catch (t: Throwable) {
             module.log(Log.WARN, TAG, "HotspotAdb: failed to hook AdbWifiNetworkMonitor.onLost: $t")
+            reporter.report("NetworkMonitor", "onLost", Status.FAILED, "exception: $t")
         }
 
         // onCapabilitiesChanged(Network, NetworkCapabilities): fired when network capabilities
@@ -350,30 +377,17 @@ object FrameworkHook {
                             networkCapabilitiesClass,
                         ).also { it.isAccessible = true }
                 module.deoptimize(onCaps)
-                module.hook(onCaps).intercept { chain ->
-                    val ctx = getContextFromMonitor(chain.getThisObject())
-                    if (ctx != null) {
-                        if (HotspotHelper.isHotspotActive(ctx)) {
-                            module.log(Log.INFO, TAG, "HotspotAdb: blocked AdbWifiNetworkMonitor.onCapabilitiesChanged (hotspot active)")
-                            null
-                        } else {
-                            chain.proceed()
-                        }
-                    } else {
-                        if (!contextExtractionWarned) {
-                            module.log(Log.WARN, TAG, "HotspotAdb: AdbWifiNetworkMonitor context extraction failed; pass-through")
-                            contextExtractionWarned = true
-                        }
-                        chain.proceed()
-                    }
-                }
+                module.hook(onCaps).intercept(createInterceptor("onCapabilitiesChanged"))
                 module.log(Log.INFO, TAG, "HotspotAdb: hooked AdbWifiNetworkMonitor.onCapabilitiesChanged (${clazz.name})")
+                reporter.report("NetworkMonitor", "onCapabilitiesChanged", Status.INSTALLED, "hooked successfully")
                 installed = true
             } catch (t: Throwable) {
                 module.log(Log.WARN, TAG, "HotspotAdb: failed to hook AdbWifiNetworkMonitor.onCapabilitiesChanged: $t")
+                reporter.report("NetworkMonitor", "onCapabilitiesChanged", Status.FAILED, "exception: $t")
             }
         } else {
             module.log(Log.WARN, TAG, "HotspotAdb: android.net.NetworkCapabilities not found; onCapabilitiesChanged hook skipped")
+            reporter.report("NetworkMonitor", "onCapabilitiesChanged", Status.SKIPPED, "missing NetworkCapabilities")
         }
 
         return installed
@@ -383,6 +397,7 @@ object FrameworkHook {
         clazz: Class<*>,
         module: XposedModule,
         label: String,
+        reporter: HookReporter,
     ): Boolean {
         return try {
             val onReceive =
@@ -408,9 +423,11 @@ object FrameworkHook {
                 }
             }
             module.log(Log.INFO, TAG, "HotspotAdb: hooked BroadcastReceiver.onReceive via $label")
+            reporter.report("BroadcastReceiver", label, Status.INSTALLED, "hooked onReceive")
             true
         } catch (t: Throwable) {
             module.log(Log.DEBUG, TAG, "HotspotAdb: failed to hook onReceive in ${clazz.name}: $t")
+            reporter.report("BroadcastReceiver", label, Status.FAILED, "exception: $t")
             false
         }
     }
@@ -460,7 +477,10 @@ object FrameworkHook {
      * AdbWifiNetworkMonitor holds a reference to AdbDebuggingManager (which has mContext),
      * or potentially has its own mContext field.
      */
-    private fun getContextFromMonitor(monitor: Any?): Context? {
+    private fun getContextFromMonitor(
+        monitor: Any?,
+        module: XposedModule,
+    ): Context? {
         monitor ?: return null
         return try {
             (ReflectionCompat.getFieldValueByName(monitor, "mContext") as? Context)
@@ -472,7 +492,7 @@ object FrameworkHook {
                     manager?.let { ReflectionCompat.getFieldValueByName(it, "mContext") as? Context }
                 }
         } catch (e: Exception) {
-            Log.w(TAG, "HotspotAdb: failed to get context from AdbWifiNetworkMonitor: $e")
+            module.log(Log.WARN, TAG, "HotspotAdb: failed to get context from AdbWifiNetworkMonitor: $e")
             null
         }
     }
