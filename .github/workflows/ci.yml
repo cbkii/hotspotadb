@@ -35,10 +35,8 @@ jobs:
           java-version: 21
 
       - uses: android-actions/setup-android@v3
-      - name: Install Android SDK components
-        run: |
-          yes | sdkmanager --licenses || true
-          sdkmanager "platform-tools" "platforms;android-36" "build-tools;35.0.0"
+        with:
+          packages: 'build-tools;35.0.0 platforms;android-36 platform-tools cmdline-tools;latest'
 
       - uses: gradle/actions/setup-gradle@v4
 
@@ -56,10 +54,8 @@ jobs:
           java-version: 21
 
       - uses: android-actions/setup-android@v3
-      - name: Install Android SDK components
-        run: |
-          yes | sdkmanager --licenses || true
-          sdkmanager "platform-tools" "platforms;android-36" "build-tools;35.0.0"
+        with:
+          packages: 'build-tools;35.0.0 platforms;android-36 platform-tools cmdline-tools;latest'
 
       - uses: gradle/actions/setup-gradle@v4
 
