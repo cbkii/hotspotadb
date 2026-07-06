@@ -219,8 +219,8 @@ nc_supports_zero_io_timeout() {
 
     local help_out
     help_out=$(run_bounded 3 nc -h 2>&1 || true)
-    printf '%s\n' "$help_out" | grep -Fq -- '-z' || return 1
-    printf '%s\n' "$help_out" | grep -Fq -- '-w' || return 1
+    [[ "$help_out" == *"-z"* ]] || return 1
+    [[ "$help_out" == *"-w"* ]] || return 1
     return 0
 }
 
