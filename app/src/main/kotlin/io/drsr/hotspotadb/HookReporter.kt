@@ -31,10 +31,10 @@ class HookReporter(private val processName: String, private val module: XposedMo
 
     fun summarize() {
         if (results.isEmpty()) return
-        module.log(Log.INFO, HotspotAdbModule.TAG, "=== Hook Install Summary for $processName ===")
+        module.log(Log.INFO, HotspotAdbModule.TAG, "HotspotAdb: === Hook Install Summary for $processName ===")
         results.forEach {
-            module.log(Log.INFO, HotspotAdbModule.TAG, "  [${it.status.name}] ${it.area} - ${it.target} (${it.detail})")
+            module.log(Log.INFO, HotspotAdbModule.TAG, "HotspotAdb:   [${it.status.name}] ${it.area} - ${it.target} (${it.detail})")
         }
-        module.log(Log.INFO, HotspotAdbModule.TAG, "=========================================")
+        module.log(Log.INFO, HotspotAdbModule.TAG, "HotspotAdb: =========================================")
     }
 }
