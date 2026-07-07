@@ -173,8 +173,8 @@ log "=== ADB Client Readiness ==="
 if command -v adb >/dev/null 2>&1; then
     ADB_VERSION_OUT=$(run_bounded 5 adb version 2>/dev/null)
     if [ -n "$ADB_VERSION_OUT" ]; then
-        printf '%s
-' "$ADB_VERSION_OUT" | head -n 1 | while read -r line; do log "$line"; done
+        read -r first_line <<< "$ADB_VERSION_OUT"
+        log "$first_line"
     else
         warn "adb version unavailable or timed out."
     fi
@@ -220,10 +220,8 @@ nc_supports_zero_io_timeout() {
 
     local help_out
     help_out=$(run_bounded 3 nc -h 2>&1 || true)
-    printf '%s
-' "$help_out" | grep -Fq -- '-z' || return 1
-    printf '%s
-' "$help_out" | grep -Fq -- '-w' || return 1
+    [[ "$help_out" == *"-z"* ]] || return 1
+    [[ "$help_out" == *"-w"* ]] || return 1
     return 0
 }
 
