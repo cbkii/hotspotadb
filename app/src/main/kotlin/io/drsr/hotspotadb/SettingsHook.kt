@@ -64,11 +64,9 @@ object SettingsHook {
         classLoader: ClassLoader,
         module: XposedModule,
     ) {
-        val reporter = HookReporter("com.android.settings", module)
-        hookIsWifiConnected(classLoader, module, reporter)
-        hookGetIpv4Address(classLoader, module, reporter)
-        hookWifiTetherSettings(classLoader, module, reporter)
-        reporter.summarize()
+        hookIsWifiConnected(classLoader, module)
+        hookGetIpv4Address(classLoader, module)
+        hookWifiTetherSettings(classLoader, module)
     }
 
     // ---- isWifiConnected ----
@@ -76,7 +74,6 @@ object SettingsHook {
     private fun hookIsWifiConnected(
         classLoader: ClassLoader,
         module: XposedModule,
-        reporter: HookReporter,
     ) {
         // Android 16+: AdbWirelessDebuggingPreferenceController; Android 15: WirelessDebuggingPreferenceController
         val clazz =
@@ -86,11 +83,7 @@ object SettingsHook {
                 "Settings Wi-Fi gate",
                 "com.android.settings.development.AdbWirelessDebuggingPreferenceController",
                 "com.android.settings.development.WirelessDebuggingPreferenceController",
-            )
-        if (clazz == null) {
-            reporter.report("Settings Wi-Fi gate", "Controller", Status.MISSING, "class not found")
-            return
-        }
+            ) ?: return
         val method =
             ReflectionCompat.findMethod(
                 clazz,
@@ -99,11 +92,7 @@ object SettingsHook {
                 "isWifiConnected",
                 includeInherited = true,
                 Context::class.java,
-            )
-        if (method == null) {
-            reporter.report("Settings Wi-Fi gate", "isWifiConnected", Status.MISSING, "method not found")
-            return
-        }
+            ) ?: return
 
         module.hook(method).intercept { chain ->
             val result = chain.proceed()
@@ -123,7 +112,6 @@ object SettingsHook {
                 result
             }
         }
-        reporter.report("Settings Wi-Fi gate", "isWifiConnected", Status.INSTALLED, "hooked ${clazz.simpleName}")
         module.log(Log.INFO, TAG, "HotspotAdb: hooked ${clazz.simpleName}.isWifiConnected")
     }
 
@@ -132,7 +120,6 @@ object SettingsHook {
     private fun hookGetIpv4Address(
         classLoader: ClassLoader,
         module: XposedModule,
-        reporter: HookReporter,
     ) {
         val clazz =
             ReflectionCompat.findFirstClass(
@@ -140,11 +127,7 @@ object SettingsHook {
                 module,
                 "Settings IPv4",
                 "com.android.settings.development.AdbIpAddressPreferenceController",
-            )
-        if (clazz == null) {
-            reporter.report("Settings IPv4", "Controller", Status.MISSING, "class not found")
-            return
-        }
+            ) ?: return
         val method =
             ReflectionCompat.findMethod(
                 clazz,
@@ -152,11 +135,7 @@ object SettingsHook {
                 "Settings IPv4",
                 "getIpv4Address",
                 includeInherited = true,
-            )
-        if (method == null) {
-            reporter.report("Settings IPv4", "getIpv4Address", Status.MISSING, "method not found")
-            return
-        }
+            ) ?: return
 
         module.hook(method).intercept { chain ->
             val thisObj = chain.getThisObject() ?: return@intercept chain.proceed()
@@ -168,7 +147,6 @@ object SettingsHook {
             module.log(Log.INFO, TAG, "HotspotAdb: getIpv4Address → $ip (hotspot AP interface)")
             ip
         }
-        reporter.report("Settings IPv4", "getIpv4Address", Status.INSTALLED, "hooked")
         module.log(Log.INFO, TAG, "HotspotAdb: hooked AdbIpAddressPreferenceController.getIpv4Address")
     }
 
@@ -177,7 +155,6 @@ object SettingsHook {
     private fun hookWifiTetherSettings(
         classLoader: ClassLoader,
         module: XposedModule,
-        reporter: HookReporter,
     ) {
         val clazz =
             ReflectionCompat.findFirstClass(
@@ -185,23 +162,15 @@ object SettingsHook {
                 module,
                 "Settings tether fragment",
                 "com.android.settings.wifi.tether.WifiTetherSettings",
-            )
-        if (clazz == null) {
-            reporter.report("Settings tether fragment", "WifiTetherSettings", Status.MISSING, "class not found")
-            return
-        }
+            ) ?: return
 
         // Resolve both lifecycle methods before installing any hooks so we never end up
         // with the registration path (onStart) wired but the cleanup path (onStop) absent,
         // which would cause duplicate observer/receiver registrations on re-entry.
         val onStart =
-            ReflectionCompat.findMethod(clazz, module, "Settings tether fragment", "onStart", includeInherited = true)
+            ReflectionCompat.findMethod(clazz, module, "Settings tether fragment", "onStart", includeInherited = true) ?: return
         val onStop =
-            ReflectionCompat.findMethod(clazz, module, "Settings tether fragment", "onStop", includeInherited = true)
-        if (onStart == null || onStop == null) {
-            reporter.report("Settings tether fragment", "onStart/onStop", Status.MISSING, "lifecycle methods missing")
-            return
-        }
+            ReflectionCompat.findMethod(clazz, module, "Settings tether fragment", "onStop", includeInherited = true) ?: return
 
         module.hook(onStart).intercept { chain ->
             chain.proceed()
@@ -224,7 +193,6 @@ object SettingsHook {
             chain.proceed()
             null
         }
-        reporter.report("Settings tether fragment", "onStart/onStop", Status.INSTALLED, "hooked successfully")
         module.log(Log.INFO, TAG, "HotspotAdb: hooked WifiTetherSettings.onStop for listener cleanup")
     }
 
@@ -495,7 +463,7 @@ object SettingsHook {
                 ?: HotspotHelper.getAnyWlanIp()
                 ?: return ""
         val port = getAdbWirelessPort()
-        return if (port > 0) "Host AP IP: $ip:$port" else "Host AP IP: $ip"
+        return if (port > 0) "Host IP: $ip:$port" else "Host IP: $ip"
     }
 
     private fun getAdbWirelessPort(): Int =
