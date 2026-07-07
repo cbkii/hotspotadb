@@ -241,7 +241,18 @@ object FrameworkHook {
             module.log(Log.INFO, TAG, "HotspotAdb: scanning Android 15/16 anonymous ADB BroadcastReceiver fallbacks")
             val baseName = "com.android.server.adb.AdbDebuggingManager\$AdbDebuggingHandler"
             for (i in 1..15) {
-                val clazz = runCatching { Class.forName("$baseName\$$i", false, classLoader) }.getOrNull() ?: break
+                val clazz =
+                    try {
+                        Class.forName("$baseName\$$i", false, classLoader)
+                    } catch (e: ClassNotFoundException) {
+                        // The Java compiler assigns numbers to anonymous inner classes sequentially without gaps.
+                        // Encountering the first ClassNotFoundException means no further inner classes exist.
+                        // Break early to avoid up to 14 expensive, unnecessary exceptions.
+                        break
+                    } catch (e: Throwable) {
+                        module.log(Log.WARN, TAG, "HotspotAdb: unexpected error loading $baseName\$$i: $e")
+                        continue
+                    }
                 if (!BroadcastReceiver::class.java.isAssignableFrom(clazz)) continue
                 if (hookOnReceive(clazz, module, "anonymous inner class $i (Android 15)")) {
                     anyHookInstalled = true
