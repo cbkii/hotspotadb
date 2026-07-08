@@ -81,16 +81,36 @@ jobs:
             args+=(--force)
           fi
 
+          set +e
           python3 scripts/upstream_release_monitor.py "${args[@]}"
-
-          if [[ ! -f artifacts/upstream-monitor-report.md ]]; then
-            echo "::error::Monitor did not produce expected report artifact."
-            # fail softly in bash session but this will fail the action
-            false
-          fi
+          script_rc=$?
+          set -e
 
           echo "## Upstream monitor summary" >> "$GITHUB_STEP_SUMMARY"
-          echo "Monitor executed successfully." >> "$GITHUB_STEP_SUMMARY"
+
+          if [[ -s artifacts/metadata.json ]]; then
+            python3 -c '
+import json
+from pathlib import Path
+
+data = json.loads(Path("artifacts/metadata.json").read_text())
+for key in ("result", "exit_code", "upstream_repo", "base_tag", "head_tag", "changed_files_count", "issue_action", "skip_reason"):
+    print(f"- {key}: {data.get(key)}")
+if data.get("warnings"):
+    print("\n### Warnings")
+    for item in data["warnings"][:10]:
+        print(f"- {item}")
+if data.get("errors"):
+    print("\n### Errors")
+    for item in data["errors"][:10]:
+        print(f"- {item}")
+' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::error::Monitor did not produce metadata.json" >&2
+            exit 1
+          fi
+
+          exit "$script_rc"
 
       - name: Upload artifacts
         if: always()

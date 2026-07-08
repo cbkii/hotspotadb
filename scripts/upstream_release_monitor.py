@@ -8,53 +8,97 @@ import tempfile
 import urllib.parse
 from typing import Sequence, Union
 from pathlib import Path
+import shlex
 
 def run_cmd(
-    cmd: Sequence[str],
+    cmd: Sequence[Union[str, Path]],
     *,
     check: bool = True,
     timeout: float = 120.0,
     capture_output: bool = True,
     cwd: Union[str, Path, None] = None,
     ok_codes: set[int] = None,
+    text: bool = True,
 ) -> subprocess.CompletedProcess:
+    if not cmd:
+        raise ValueError("Command sequence cannot be empty")
+
+    cmd_str_list = [str(arg) for arg in cmd]
+    cmd_str = shlex.join(cmd_str_list)
+
     if ok_codes is None:
         ok_codes = {0}
     try:
         # sourcery skip: subprocess-run-check
+        # Arguments are passed as a list with shell=False, so this is safe.
         result = subprocess.run(  # nosec
-            cmd,
+            cmd_str_list,
             check=False,
             timeout=timeout,
             capture_output=capture_output,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
+            text=text,
+            encoding="utf-8" if text else None,
+            errors="replace" if text else None,
             cwd=cwd,
             shell=False
         )
         if check and result.returncode not in ok_codes:
-            cmd_str = " ".join(cmd)
             print(f"::error::Command failed: {cmd_str}")
-            if result.stdout:
-                print(f"stdout:\n{result.stdout[:1000]}")
-            if result.stderr:
-                print(f"stderr:\n{result.stderr[:1000]}")
-            raise subprocess.CalledProcessError(result.returncode, cmd, result.stdout, result.stderr)
+            if capture_output:
+                if text:
+                    if result.stdout: print(f"stdout:\n{result.stdout[:1000]}")
+                    if result.stderr: print(f"stderr:\n{result.stderr[:1000]}")
+                else:
+                    if result.stdout: print(f"stdout:\n{result.stdout[:1000].decode('utf-8', 'replace')}")
+                    if result.stderr: print(f"stderr:\n{result.stderr[:1000].decode('utf-8', 'replace')}")
+            raise subprocess.CalledProcessError(result.returncode, cmd_str_list, result.stdout, result.stderr)
         return result
     except subprocess.TimeoutExpired as e:
-        cmd_str = " ".join(cmd)
         print(f"::error::Command timed out: {cmd_str}")
         raise
 
+def normalize_release_payload(raw):
+    """
+    Normalizes GitHub API release payloads into a flat list of valid release dictionaries.
+    Handles:
+    - flat REST response list
+    - `gh api --paginate --slurp` list-of-lists
+    - mixed defensive payloads
+    """
+    releases = []
+
+    if not isinstance(raw, list):
+        return releases
+
+    for item in raw:
+        if isinstance(item, list):
+            for sub_item in item:
+                if isinstance(sub_item, dict) and isinstance(sub_item.get("tag_name"), str):
+                    releases.append(sub_item)
+        elif isinstance(item, dict) and isinstance(item.get("tag_name"), str):
+            releases.append(item)
+
+    return releases
+
+
 def get_releases(upstream_repo, include_prerelease=False):
     cmd = ["gh", "api", f"repos/{upstream_repo}/releases", "--paginate", "--slurp"]
-    result = run_cmd(cmd, check=True)
     try:
-        releases = json.loads(result.stdout)
+        result = run_cmd(cmd, check=True, timeout=60.0)
+    except subprocess.CalledProcessError as e:
+        print(f"::error::Failed to fetch releases from GitHub API: {e}")
+        raise
+
+    try:
+        raw = json.loads(result.stdout)
     except json.JSONDecodeError:
-        print("Failed to decode releases JSON from GitHub API.")
-        return []
+        print("::error::Failed to decode releases JSON from GitHub API.")
+        raise ValueError("Invalid JSON from GitHub API")
+
+    releases = normalize_release_payload(raw)
+
+    if not releases:
+        print("::warning::GitHub releases API returned no release objects.")
 
     eligible_releases = []
     for r in releases:
@@ -71,7 +115,7 @@ def resolve_tags(args):
     head_tag = args.head_tag
     base_tag = args.base_tag
 
-    releases = []
+    releases = None
     if not head_tag or not base_tag:
         releases = get_releases(args.upstream_repo, args.include_prerelease)
 
@@ -79,18 +123,25 @@ def resolve_tags(args):
         if not releases:
             print(f"::error::No eligible releases found for {args.upstream_repo}")
             return None, None
-        head_tag = releases[0]["tag_name"]
+        for r in releases:
+            head_tag = r.get("tag_name")
+            if head_tag:
+                break
 
     if not base_tag:
         if not releases:
-             releases = get_releases(args.upstream_repo, args.include_prerelease)
+            # Re-check in case it was somehow empty but not fetched (though earlier logic prevents this)
+            releases = get_releases(args.upstream_repo, args.include_prerelease)
 
         found_head = False
         for r in releases:
+            t = r.get("tag_name")
+            if not t:
+                continue
             if found_head:
-                base_tag = r["tag_name"]
+                base_tag = t
                 break
-            if r["tag_name"] == head_tag:
+            if t == head_tag:
                 found_head = True
 
         if not base_tag:
@@ -156,32 +207,53 @@ def generate_diffs(base_ref, head_ref):
 
     # get changed files using NUL delimited format
     name_status = run_cmd(["git", "diff", "--name-status", "-z", "--find-renames", base_ref, head_ref], check=True)
-
-    changed_files = []
-    if name_status.stdout.strip():
-        parts = name_status.stdout.split('\x00')
-        i = 0
-        while i < len(parts) - 1:
-            status_str = parts[i]
-            status_char = status_str[0] if status_str else 'U'
-
-            if status_char == 'R' or status_char == 'C':
-                old_path = parts[i+1]
-                new_path = parts[i+2]
-                status_name = "renamed" if status_char == 'R' else "copied"
-                changed_files.append({"status": status_name, "old_path": old_path, "path": new_path})
-                i += 3
-            else:
-                path = parts[i+1]
-                status_name = "modified"
-                if status_char == 'A': status_name = "added"
-                elif status_char == 'D': status_name = "deleted"
-                elif status_char == 'T': status_name = "type-changed"
-                elif status_char == 'U': status_name = "unknown"
-                changed_files.append({"status": status_name, "path": path})
-                i += 2
+    changed_files = parse_name_status_z(name_status.stdout)
 
     return stat.stdout, patch.stdout, changed_files
+
+def parse_name_status_z(output: str) -> list[dict]:
+    changed_files = []
+    if not output or not output.strip('\x00'):
+        return changed_files
+
+    parts = output.split('\x00')
+    i = 0
+    while i < len(parts) - 1:
+        status_str = parts[i]
+        # Skip empty parts or purely newline parts just in case
+        if not status_str or status_str == '\n':
+            i += 1
+            continue
+
+        if '\n' in status_str:
+            status_str = status_str.split('\n')[-1]
+            if not status_str:
+                i += 1
+                continue
+
+        status_char = status_str[0]
+
+        if status_char in ('R', 'C'):
+            if i + 2 >= len(parts) or not parts[i+1] or not parts[i+2]:
+                break # Malformed
+            old_path = parts[i+1]
+            new_path = parts[i+2]
+            status_name = "renamed" if status_char == 'R' else "copied"
+            changed_files.append({"status": status_name, "old_path": old_path, "path": new_path})
+            i += 3
+        else:
+            if i + 1 >= len(parts) or not parts[i+1]:
+                break # Malformed
+            path = parts[i+1]
+            status_name = "modified"
+            if status_char == 'A': status_name = "added"
+            elif status_char == 'D': status_name = "deleted"
+            elif status_char == 'T': status_name = "type-changed"
+            elif status_char == 'U': status_name = "unknown"
+            changed_files.append({"status": status_name, "path": path})
+            i += 2
+
+    return changed_files
 
 def get_file_map():
     map_path = ".github/upstream-file-map.json"
@@ -220,7 +292,7 @@ def compare_local_files(changed_files, head_ref, out_dir):
             comp["local_status"] = "missing"
         else:
             # Get upstream latest file content as bytes
-            res_raw = subprocess.run(["git", "show", f"{head_ref}:{upstream_path}"], capture_output=True, shell=False, check=False)
+            res_raw = run_cmd(["git", "show", f"{head_ref}:{upstream_path}"], check=False, text=False)
             if res_raw.returncode == 0:
                 upstream_content = res_raw.stdout
                 with open(local_path, "rb") as local_f:
@@ -249,7 +321,9 @@ def compare_local_files(changed_files, head_ref, out_dir):
         comparisons.append(comp)
 
         # write individual comparison file
-        safe_name = f"{idx}_{upstream_path.replace('/', '_')}.diff"
+        path_hash = hashlib.sha256(upstream_path.encode("utf-8")).hexdigest()[:16]
+        safe_name = f"{idx}-{path_hash}.diff"
+        comp["diff_artifact_name"] = safe_name
         if comp["diff"]:
             with open(os.path.join(comp_dir, safe_name), "w", encoding="utf-8") as out_f:
                 out_f.write(comp["diff"])
@@ -511,11 +585,11 @@ def check_resolved_tags(upstream_repo, head_tag, base_tag):
 def manage_issue(args, title, body, fingerprint, head_tag, base_tag):
     if args.dry_run:
         print("Dry run: skipping issue creation/update.")
-        return
+        return "dry_run"
 
     if not args.force and check_resolved_tags(args.upstream_repo, head_tag, base_tag):
         print(f"Skipping: {head_tag} is marked as resolved in .github/upstream-release-resolved-tags.txt")
-        return
+        return "skipped_resolved"
 
     search_query = f"{title} in:title"
 
@@ -530,7 +604,7 @@ def manage_issue(args, title, body, fingerprint, head_tag, base_tag):
             match = re.search(r"<!-- upstream-monitor:fingerprint:([a-f0-9]{64}) -->", content)
             if match and match.group(1) == fingerprint and not args.force:
                 print(f"Skipping: issue #{open_num} is up to date (fingerprint match).")
-                return
+                return "skipped_duplicate"
 
         print(f"Updating existing issue #{open_num}...")
 
@@ -546,30 +620,188 @@ def manage_issue(args, title, body, fingerprint, head_tag, base_tag):
             else:
                  # fallback to comment
                  run_cmd(["gh", "issue", "comment", open_num, "--repo", args.repo, "--body-file", body_path], check=True)
+            return "updated"
+        except subprocess.CalledProcessError:
+            print("::error::Failed to update issue.")
+            return "failed"
         finally:
             os.remove(body_path)
     else:
-        # Before creating, optionally check closed issues, but if it's not resolved in tags, we recreate it deterministically
+        # Check closed issues. If not resolved, reopen/recreate.
         closed_res = run_cmd(["gh", "issue", "list", "--repo", args.repo, "--state", "closed", "--search", search_query, "--json", "number", "--jq", ".[0].number // \"\""], check=False)
         closed_num = closed_res.stdout.strip() if closed_res.returncode == 0 else ""
-        if closed_num and not args.force:
-            print(f"Skipping: issue #{closed_num} is closed but not marked resolved in tags file. Use --force to override.")
-            return
 
-        print("Creating new issue...")
         with tempfile.NamedTemporaryFile(delete=False, suffix=".md", mode="w", encoding="utf-8") as body_file:
             body_file.write(body)
             body_path = body_file.name
 
         try:
-            create_res = run_cmd(["gh", "issue", "create", "--repo", args.repo, "--title", title, "--body-file", body_path], check=False)
-            if create_res.returncode == 0:
-                url = create_res.stdout.strip()
-                print(f"Created issue: {url}")
+            if closed_num:
+                print(f"Reopening and updating closed issue #{closed_num} because it's not marked resolved...")
+                edit_res = run_cmd(["gh", "issue", "edit", closed_num, "--repo", args.repo, "--body-file", body_path], check=False)
+                reopen_res = run_cmd(["gh", "issue", "reopen", closed_num, "--repo", args.repo], check=False)
+                if edit_res.returncode == 0 and reopen_res.returncode == 0:
+                     print(f"Reopened and updated issue #{closed_num}.")
+                     return "reopened_updated"
+                else:
+                     print(f"::error::Failed to reopen/update issue #{closed_num}.")
+                     return "failed"
             else:
-                print(f"::error::Failed to create issue: {create_res.stderr}")
+                print("Creating new issue...")
+                create_res = run_cmd(["gh", "issue", "create", "--repo", args.repo, "--title", title, "--body-file", body_path], check=False)
+                if create_res.returncode == 0:
+                    url = create_res.stdout.strip()
+                    print(f"Created issue: {url}")
+                    return "created"
+                else:
+                    print(f"::error::Failed to create issue: {create_res.stderr}")
+                    return "failed"
+        except subprocess.CalledProcessError:
+            return "failed"
         finally:
             os.remove(body_path)
+
+def metadata_safe_comparisons(comparisons):
+    safe = []
+    for c in comparisons:
+        entry = dict(c)
+        if "diff" in entry:
+            entry["diff_excerpt"] = truncate_text(entry["diff"], 500)
+            entry["diff_omitted"] = True
+            del entry["diff"]
+        safe.append(entry)
+    return safe
+
+def write_run_summary(args, summary: dict, error_message: str | None = None):
+    # Strip full diff bodies from comparisons before writing to metadata
+    if "comparisons" in summary:
+        summary["comparisons"] = metadata_safe_comparisons(summary["comparisons"])
+
+    # write metadata.json
+    with open(os.path.join(args.out_dir, "metadata.json"), "w", encoding="utf-8") as f:
+        json.dump(summary, f, indent=2)
+
+    # write upstream-monitor-report.md
+    report_file = os.path.join(args.out_dir, "upstream-monitor-report.md")
+    if not os.path.exists(report_file):
+        with open(report_file, "w", encoding="utf-8") as f:
+            if error_message:
+                f.write(f"## Upstream Release Monitor Failed\n\n{error_message}\n")
+            else:
+                f.write(f"## Upstream Release Monitor\n\nSkipped: {summary.get('skip_reason', 'unknown reason')}\n")
+
+    # write warnings.txt if needed
+    if summary.get("warnings"):
+        with open(os.path.join(args.out_dir, "warnings.txt"), "w", encoding="utf-8") as f:
+            f.write("\n".join(summary["warnings"]) + "\n")
+
+def execute_monitor(args) -> dict:
+    summary = {
+        "result": "unknown",
+        "exit_code": 1,
+        "upstream_repo": args.upstream_repo,
+        "head_tag": args.head_tag,
+        "base_tag": args.base_tag,
+        "head_ref": None,
+        "base_ref": None,
+        "local_commit": None,
+        "changed_files_count": 0,
+        "issue_action": None,
+        "warnings": [],
+        "errors": [],
+        "skip_reason": None,
+    }
+
+    try:
+        head_tag, base_tag = resolve_tags(args)
+    except Exception as e:
+        summary["result"] = "failed"
+        summary["errors"].append(f"Failed to resolve tags: {e}")
+        return summary
+
+    summary["head_tag"] = head_tag
+    summary["base_tag"] = base_tag
+
+    if not head_tag:
+        summary["result"] = "skipped_no_releases"
+        summary["skip_reason"] = "no_eligible_releases_found"
+        summary["exit_code"] = 0
+        return summary
+
+    print(f"Resolved head_tag: {head_tag}, base_tag: {base_tag}")
+
+    fetch_res = fetch_upstream(args.upstream_repo, head_tag, base_tag)
+    summary["head_ref"] = fetch_res.head_ref
+    summary["base_ref"] = fetch_res.base_ref
+
+    if not fetch_res.head_fetched:
+        print("::error::Failed to fetch head ref.")
+        summary["result"] = "failed"
+        summary["errors"].append(f"Failed to fetch head tag `{head_tag}` from upstream.")
+        return summary
+
+    stat, patch, changed_files, comparisons = "", "", [], []
+
+    # Check if we should fallback to single tag mode
+    if base_tag and fetch_res.base_fetched:
+        stat, patch, changed_files = generate_diffs(fetch_res.base_ref, fetch_res.head_ref)
+    else:
+        print("Base tag not fetched, operating in single-tag mode.")
+        if base_tag:
+            summary["warnings"].append(f"Base tag `{base_tag}` not fetched. Operating in single-tag mode.")
+        # Single tag mode diff generation
+        stat_res = run_cmd(["git", "show", "--stat", fetch_res.head_ref], check=True)
+        stat = stat_res.stdout
+
+        name_status = run_cmd(["git", "diff-tree", "--root", "--no-commit-id", "--name-status", "-z", "-r", "--find-renames", fetch_res.head_ref], check=True)
+        changed_files = parse_name_status_z(name_status.stdout)
+
+    summary["changed_files_count"] = len(changed_files)
+    comparisons = compare_local_files(changed_files, fetch_res.head_ref, args.out_dir)
+    summary["comparisons"] = comparisons
+
+    with open(os.path.join(args.out_dir, "upstream-release.diff"), "w", encoding="utf-8") as f:
+        f.write(patch)
+
+    commits, prs = get_commits_and_prs(args.upstream_repo, fetch_res.base_ref, fetch_res.head_ref, args.max_pr_lookups)
+
+    branch = os.environ.get("GITHUB_REF_NAME")
+    if not branch:
+        branch_res = run_cmd(["git", "rev-parse", "--abbrev-ref", "HEAD"], check=False)
+        branch = branch_res.stdout.strip() if branch_res.returncode == 0 else "unknown"
+
+    commit_res = run_cmd(["git", "rev-parse", "HEAD"], check=False)
+    local_commit = commit_res.stdout.strip() if commit_res.returncode == 0 else "unknown"
+    summary["local_commit"] = local_commit
+
+    fingerprint = generate_fingerprint(args.upstream_repo, base_tag, head_tag, args.repo, branch, stat, comparisons)
+    summary["fingerprint"] = fingerprint
+
+    md_report = build_markdown(args, args.upstream_repo, base_tag, head_tag, stat, patch, changed_files, comparisons, commits, prs, fingerprint, local_commit, branch)
+
+    report_file = os.path.join(args.out_dir, "upstream-monitor-report.md")
+    with open(report_file, "w", encoding="utf-8") as f:
+        f.write(md_report)
+
+    title = f"Upstream release monitor: {args.upstream_repo} {base_tag}...{head_tag}" if base_tag else f"Upstream release monitor: {args.upstream_repo} {head_tag}"
+    issue_action = manage_issue(args, title, md_report, fingerprint, head_tag, base_tag)
+
+    summary["issue_action"] = issue_action
+
+    if issue_action in ("failed",):
+        summary["result"] = "failed"
+        summary["errors"].append("Failed to manage issue.")
+    elif issue_action in ("skipped_resolved",):
+        summary["result"] = "skipped_resolved"
+        summary["exit_code"] = 0
+    elif issue_action in ("skipped_duplicate",):
+        summary["result"] = "skipped_duplicate"
+        summary["exit_code"] = 0
+    else:
+        summary["result"] = "success_with_warnings" if summary["warnings"] else "success"
+        summary["exit_code"] = 0
+
+    return summary
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Upstream Release Monitor")
@@ -586,90 +818,32 @@ def main() -> int:
     args = parser.parse_args()
     os.makedirs(args.out_dir, exist_ok=True)
 
-    head_tag, base_tag = resolve_tags(args)
-    if not head_tag:
-        return 1
+    try:
+        summary = execute_monitor(args)
+    except Exception as e:
+        print(f"::error::Unexpected error: {e}")
+        import traceback
+        traceback.print_exc()
+        summary = {
+            "result": "failed",
+            "exit_code": 1,
+            "upstream_repo": args.upstream_repo,
+            "head_tag": args.head_tag,
+            "base_tag": args.base_tag,
+            "head_ref": None,
+            "base_ref": None,
+            "local_commit": None,
+            "changed_files_count": 0,
+            "issue_action": None,
+            "warnings": [],
+            "errors": [f"Unexpected error: {e}"],
+            "skip_reason": None,
+        }
 
-    print(f"Resolved head_tag: {head_tag}, base_tag: {base_tag}")
+    error_msg = "\n".join(summary.get("errors", [])) if summary.get("errors") else None
+    write_run_summary(args, summary, error_message=error_msg)
 
-    fetch_res = fetch_upstream(args.upstream_repo, head_tag, base_tag)
-    if not fetch_res.head_fetched:
-        print("::error::Failed to fetch head ref.")
-        return 1
-
-    stat, patch, changed_files, comparisons = "", "", [], []
-
-    # Check if we should fallback to single tag mode
-    if base_tag and fetch_res.base_fetched:
-        stat, patch, changed_files = generate_diffs(fetch_res.base_ref, fetch_res.head_ref)
-    else:
-        print("Base tag not fetched, operating in single-tag mode.")
-        # Single tag mode diff generation
-        stat_res = run_cmd(["git", "show", "--stat", fetch_res.head_ref], check=True)
-        stat = stat_res.stdout
-
-        name_status = run_cmd(["git", "show", "--name-status", "-z", "--find-renames", fetch_res.head_ref], check=True)
-        if name_status.stdout.strip():
-            parts = name_status.stdout.split('\x00')
-            i = 0
-            while i < len(parts) - 1:
-                # git show output starts with commit headers, skip till we find the status
-                status_str = parts[i]
-                if '\n' in status_str: # commit header chunk
-                     # find the last part which should be the status
-                     status_str = status_str.split('\n')[-1]
-
-                status_char = status_str[0] if status_str else 'U'
-
-                if status_char == 'R' or status_char == 'C':
-                    old_path = parts[i+1]
-                    new_path = parts[i+2]
-                    status_name = "renamed" if status_char == 'R' else "copied"
-                    changed_files.append({"status": status_name, "old_path": old_path, "path": new_path})
-                    i += 3
-                else:
-                    path = parts[i+1]
-                    status_name = "modified"
-                    if status_char == 'A': status_name = "added"
-                    elif status_char == 'D': status_name = "deleted"
-                    changed_files.append({"status": status_name, "path": path})
-                    i += 2
-
-    comparisons = compare_local_files(changed_files, fetch_res.head_ref, args.out_dir)
-
-    with open(os.path.join(args.out_dir, "upstream-release.diff"), "w", encoding="utf-8") as f:
-        f.write(patch)
-
-    commits, prs = get_commits_and_prs(args.upstream_repo, fetch_res.base_ref, fetch_res.head_ref, args.max_pr_lookups)
-
-    with open(os.path.join(args.out_dir, "metadata.json"), "w", encoding="utf-8") as f:
-        json.dump({
-            "head_tag": head_tag,
-            "base_tag": base_tag,
-            "changed_files": changed_files,
-            "comparisons": comparisons
-        }, f, indent=2)
-
-    branch = os.environ.get("GITHUB_REF_NAME")
-    if not branch:
-        branch_res = run_cmd(["git", "rev-parse", "--abbrev-ref", "HEAD"], check=False)
-        branch = branch_res.stdout.strip() if branch_res.returncode == 0 else "unknown"
-
-    commit_res = run_cmd(["git", "rev-parse", "HEAD"], check=False)
-    local_commit = commit_res.stdout.strip() if commit_res.returncode == 0 else "unknown"
-
-    fingerprint = generate_fingerprint(args.upstream_repo, base_tag, head_tag, args.repo, branch, stat, comparisons)
-
-    md_report = build_markdown(args, args.upstream_repo, base_tag, head_tag, stat, patch, changed_files, comparisons, commits, prs, fingerprint, local_commit, branch)
-
-    report_file = os.path.join(args.out_dir, "upstream-monitor-report.md")
-    with open(report_file, "w", encoding="utf-8") as f:
-        f.write(md_report)
-
-    title = f"Upstream release monitor: {args.upstream_repo} {base_tag}...{head_tag}" if base_tag else f"Upstream release monitor: {args.upstream_repo} {head_tag}"
-    manage_issue(args, title, md_report, fingerprint, head_tag, base_tag)
-
-    return 0
+    return summary.get("exit_code", 1)
 
 if __name__ == "__main__":
     raise SystemExit(main())

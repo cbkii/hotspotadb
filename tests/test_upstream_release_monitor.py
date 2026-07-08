@@ -1,8 +1,10 @@
 import unittest
+from unittest.mock import patch, MagicMock
 import sys
 import os
 import tempfile
 import shutil
+import json
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../scripts')))
 import upstream_release_monitor as urm
@@ -106,6 +108,89 @@ class TestUpstreamReleaseMonitor(unittest.TestCase):
         comparisons = urm.compare_local_files([{"status": "modified", "path": "test.txt"}], "head", self.test_dir)
         self.assertEqual(comparisons[0]["local_path"], "test.txt")
         os.remove("test.txt")
+
+    def test_normalize_release_payload_flat(self):
+        payload = [{"tag_name": "1.1.0"}]
+        result = urm.normalize_release_payload(payload)
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["tag_name"], "1.1.0")
+
+    def test_normalize_release_payload_slurped(self):
+        payload = [[{"tag_name": "1.1.0"}], [{"tag_name": "1.0.2"}]]
+        result = urm.normalize_release_payload(payload)
+        self.assertEqual(len(result), 2)
+        self.assertEqual(result[0]["tag_name"], "1.1.0")
+        self.assertEqual(result[1]["tag_name"], "1.0.2")
+
+    def test_normalize_release_payload_garbage(self):
+        payload = [
+            [{"tag_name": "1.1.0"}],
+            "bad",
+            {"message": "rate limit or API error"},
+            {"tag_name": "unexpected-flat"}
+        ]
+        result = urm.normalize_release_payload(payload)
+        self.assertEqual(len(result), 2)
+        self.assertEqual([r["tag_name"] for r in result], ["1.1.0", "unexpected-flat"])
+
+    def test_parse_name_status_z(self):
+        output = "M\x00file1.txt\x00A\x00file2.txt\x00D\x00file3.txt\x00R100\x00old.txt\x00new.txt\x00C100\x00src.txt\x00dst.txt\x00\x00"
+        result = urm.parse_name_status_z(output)
+
+        self.assertEqual(len(result), 5)
+        self.assertEqual(result[0], {"status": "modified", "path": "file1.txt"})
+        self.assertEqual(result[1], {"status": "added", "path": "file2.txt"})
+        self.assertEqual(result[2], {"status": "deleted", "path": "file3.txt"})
+        self.assertEqual(result[3], {"status": "renamed", "old_path": "old.txt", "path": "new.txt"})
+        self.assertEqual(result[4], {"status": "copied", "old_path": "src.txt", "path": "dst.txt"})
+
+    def test_parse_name_status_z_malformed(self):
+        output = "M\x00file1.txt\x00R100\x00old.txt\x00" # Missing new_path
+        result = urm.parse_name_status_z(output)
+        self.assertEqual(len(result), 1) # Should only parse the first valid entry
+
+    @patch('upstream_release_monitor.run_cmd')
+    def test_get_releases_slurped(self, mock_run_cmd):
+        mock_result = MagicMock()
+        mock_result.stdout = json.dumps([
+            [{"tag_name": "1.1.0", "draft": False, "prerelease": False}],
+            [{"tag_name": "1.1.0-beta", "draft": False, "prerelease": True}],
+            [{"tag_name": "1.0.2", "draft": True, "prerelease": False}]
+        ])
+        mock_run_cmd.return_value = mock_result
+
+        releases = urm.get_releases("dummy/repo", include_prerelease=False)
+        self.assertEqual(len(releases), 1)
+        self.assertEqual(releases[0]["tag_name"], "1.1.0")
+
+        releases_pre = urm.get_releases("dummy/repo", include_prerelease=True)
+        self.assertEqual(len(releases_pre), 2)
+        self.assertEqual(releases_pre[0]["tag_name"], "1.1.0")
+        self.assertEqual(releases_pre[1]["tag_name"], "1.1.0-beta")
+
+    def test_normalize_release_payload_not_list(self):
+        self.assertEqual(urm.normalize_release_payload({"message": "error"}), [])
+
+    def test_resolve_tags_malformed_release(self):
+        args = DummyArgs()
+        with patch('upstream_release_monitor.get_releases') as mock_get:
+            mock_get.return_value = [{"not_tag": "bad"}, {"tag_name": "1.1.0"}]
+            head, base = urm.resolve_tags(args)
+            self.assertEqual(head, "1.1.0")
+
+    def test_run_cmd_empty(self):
+        with self.assertRaises(ValueError):
+            urm.run_cmd([])
+
+    def test_metadata_safe_comparisons(self):
+        long_diff = "a" * 1000
+        comparisons = [{"diff": long_diff, "local_path": "test.txt"}]
+        safe = urm.metadata_safe_comparisons(comparisons)
+        self.assertNotIn("diff", safe[0])
+        self.assertTrue(safe[0]["diff_omitted"])
+        self.assertIn("diff_excerpt", safe[0])
+        self.assertTrue(safe[0]["diff_excerpt"].endswith("... (truncated)"))
+        self.assertEqual(len(safe[0]["diff_excerpt"]), 500 + len("\n... (truncated)"))
 
 if __name__ == '__main__':
     unittest.main()
