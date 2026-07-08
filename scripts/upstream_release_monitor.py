@@ -661,7 +661,22 @@ def manage_issue(args, title, body, fingerprint, head_tag, base_tag):
         finally:
             os.remove(body_path)
 
+def metadata_safe_comparisons(comparisons):
+    safe = []
+    for c in comparisons:
+        entry = dict(c)
+        if "diff" in entry:
+            entry["diff_excerpt"] = truncate_text(entry["diff"], 500)
+            entry["diff_omitted"] = True
+            del entry["diff"]
+        safe.append(entry)
+    return safe
+
 def write_run_summary(args, summary: dict, error_message: str = None):
+    # Strip full diff bodies from comparisons before writing to metadata
+    if "comparisons" in summary:
+        summary["comparisons"] = metadata_safe_comparisons(summary["comparisons"])
+
     # write metadata.json
     with open(os.path.join(args.out_dir, "metadata.json"), "w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2)
@@ -812,7 +827,17 @@ def main() -> int:
         summary = {
             "result": "failed",
             "exit_code": 1,
-            "errors": [f"Unexpected error: {e}"]
+            "upstream_repo": args.upstream_repo,
+            "head_tag": args.head_tag,
+            "base_tag": args.base_tag,
+            "head_ref": None,
+            "base_ref": None,
+            "local_commit": None,
+            "changed_files_count": 0,
+            "issue_action": None,
+            "warnings": [],
+            "errors": [f"Unexpected error: {e}"],
+            "skip_reason": None,
         }
 
     error_msg = "\n".join(summary.get("errors", [])) if summary.get("errors") else None

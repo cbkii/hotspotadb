@@ -88,13 +88,24 @@ jobs:
 
           echo "## Upstream monitor summary" >> "$GITHUB_STEP_SUMMARY"
 
-          if [[ -f artifacts/upstream-monitor-report.md ]]; then
-            cat artifacts/upstream-monitor-report.md >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "::error::Monitor did not produce upstream-monitor-report.md" >&2
-          fi
+          if [[ -s artifacts/metadata.json ]]; then
+            python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+import json
+from pathlib import Path
 
-          if [[ ! -s artifacts/metadata.json ]]; then
+data = json.loads(Path("artifacts/metadata.json").read_text())
+for key in ("result", "exit_code", "upstream_repo", "base_tag", "head_tag", "changed_files_count", "issue_action", "skip_reason"):
+    print(f"- {key}: {data.get(key)}")
+if data.get("warnings"):
+    print("\n### Warnings")
+    for item in data["warnings"][:10]:
+        print(f"- {item}")
+if data.get("errors"):
+    print("\n### Errors")
+    for item in data["errors"][:10]:
+        print(f"- {item}")
+PY
+          else
             echo "::error::Monitor did not produce metadata.json" >&2
             exit 1
           fi

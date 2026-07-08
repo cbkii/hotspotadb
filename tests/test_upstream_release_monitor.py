@@ -182,5 +182,15 @@ class TestUpstreamReleaseMonitor(unittest.TestCase):
         with self.assertRaises(ValueError):
             urm.run_cmd([])
 
+    def test_metadata_safe_comparisons(self):
+        long_diff = "a" * 1000
+        comparisons = [{"diff": long_diff, "local_path": "test.txt"}]
+        safe = urm.metadata_safe_comparisons(comparisons)
+        self.assertNotIn("diff", safe[0])
+        self.assertTrue(safe[0]["diff_omitted"])
+        self.assertIn("diff_excerpt", safe[0])
+        self.assertTrue(safe[0]["diff_excerpt"].endswith("... (truncated)"))
+        self.assertEqual(len(safe[0]["diff_excerpt"]), 500 + len("\n... (truncated)"))
+
 if __name__ == '__main__':
     unittest.main()
