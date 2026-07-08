@@ -16,3 +16,5 @@
 *.patch
 ktlint
 .kotlin
+__pycache__/
+*.py[cod]
