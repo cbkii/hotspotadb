@@ -29,7 +29,8 @@ def run_cmd(
             text=True,
             encoding="utf-8",
             errors="replace",
-            cwd=cwd
+            cwd=cwd,
+            shell=False
         )
         if check and result.returncode not in ok_codes:
             cmd_str = " ".join(cmd)
