@@ -1,8 +1,10 @@
 import unittest
+from unittest.mock import patch, MagicMock
 import sys
 import os
 import tempfile
 import shutil
+import json
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../scripts')))
 import upstream_release_monitor as urm
@@ -106,6 +108,51 @@ class TestUpstreamReleaseMonitor(unittest.TestCase):
         comparisons = urm.compare_local_files([{"status": "modified", "path": "test.txt"}], "head", self.test_dir)
         self.assertEqual(comparisons[0]["local_path"], "test.txt")
         os.remove("test.txt")
+
+    def test_normalize_release_payload_flat(self):
+        payload = [{"tag_name": "1.1.0"}]
+        result = urm.normalize_release_payload(payload)
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["tag_name"], "1.1.0")
+
+    def test_normalize_release_payload_slurped(self):
+        payload = [[{"tag_name": "1.1.0"}], [{"tag_name": "1.0.2"}]]
+        result = urm.normalize_release_payload(payload)
+        self.assertEqual(len(result), 2)
+        self.assertEqual(result[0]["tag_name"], "1.1.0")
+        self.assertEqual(result[1]["tag_name"], "1.0.2")
+
+    def test_normalize_release_payload_garbage(self):
+        payload = [[{"tag_name": "1.1.0"}], "bad", {"tag_name": "unexpected-flat"}]
+        result = urm.normalize_release_payload(payload)
+        # Assuming the fallback or mixed scenario isn't an array of arrays
+        # The code will do: return [release for release in raw if isinstance(release, dict)]
+        # However, the code has:
+        # if all(isinstance(page, list) for page in raw): ...
+        # If mixed, it won't be all lists, so it will fall to the bottom list comprehension.
+        # So it will extract just the dicts from the top-level list.
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["tag_name"], "unexpected-flat")
+
+    @patch('upstream_release_monitor.run_cmd')
+    def test_get_releases_slurped(self, mock_run_cmd):
+        mock_result = MagicMock()
+        mock_result.stdout = json.dumps([
+            [{"tag_name": "1.1.0", "draft": False, "prerelease": False}],
+            [{"tag_name": "1.1.0-beta", "draft": False, "prerelease": True}],
+            [{"tag_name": "1.0.2", "draft": True, "prerelease": False}]
+        ])
+        mock_run_cmd.return_value = mock_result
+
+        releases = urm.get_releases("dummy/repo", include_prerelease=False)
+        self.assertEqual(len(releases), 1)
+        self.assertEqual(releases[0]["tag_name"], "1.1.0")
+
+        releases_pre = urm.get_releases("dummy/repo", include_prerelease=True)
+        self.assertEqual(len(releases_pre), 2)
+        self.assertEqual(releases_pre[0]["tag_name"], "1.1.0")
+        self.assertEqual(releases_pre[1]["tag_name"], "1.1.0-beta")
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -47,14 +47,34 @@ def run_cmd(
         print(f"::error::Command timed out: {cmd_str}")
         raise
 
+def normalize_release_payload(raw):
+    if isinstance(raw, list):
+        if all(isinstance(page, list) for page in raw):
+            return [
+                release
+                for page in raw
+                for release in page
+                if isinstance(release, dict)
+            ]
+
+        return [release for release in raw if isinstance(release, dict)]
+
+    return []
+
+
 def get_releases(upstream_repo, include_prerelease=False):
     cmd = ["gh", "api", f"repos/{upstream_repo}/releases", "--paginate", "--slurp"]
     result = run_cmd(cmd, check=True)
     try:
-        releases = json.loads(result.stdout)
+        raw = json.loads(result.stdout)
     except json.JSONDecodeError:
-        print("Failed to decode releases JSON from GitHub API.")
+        print("::error::Failed to decode releases JSON from GitHub API.")
         return []
+
+    releases = normalize_release_payload(raw)
+
+    if not releases:
+        print("::warning::GitHub releases API returned no release objects.")
 
     eligible_releases = []
     for r in releases:
@@ -588,14 +608,23 @@ def main() -> int:
 
     head_tag, base_tag = resolve_tags(args)
     if not head_tag:
-        return 1
+        # Write dummy files to prevent workflow artifact errors when skipping early
+        with open(os.path.join(args.out_dir, "metadata.json"), "w", encoding="utf-8") as f:
+            json.dump({"skip_reason": "no_head_tag_resolved"}, f, indent=2)
+        with open(os.path.join(args.out_dir, "upstream-monitor-report.md"), "w", encoding="utf-8") as f:
+            f.write("Skipped: No valid upstream releases found or head tag could not be resolved.\n")
+        return 0
 
     print(f"Resolved head_tag: {head_tag}, base_tag: {base_tag}")
 
     fetch_res = fetch_upstream(args.upstream_repo, head_tag, base_tag)
     if not fetch_res.head_fetched:
         print("::error::Failed to fetch head ref.")
-        return 1
+        with open(os.path.join(args.out_dir, "metadata.json"), "w", encoding="utf-8") as f:
+            json.dump({"skip_reason": "failed_to_fetch_head", "head_tag": head_tag}, f, indent=2)
+        with open(os.path.join(args.out_dir, "upstream-monitor-report.md"), "w", encoding="utf-8") as f:
+            f.write(f"Skipped: Failed to fetch head tag `{head_tag}` from upstream.\n")
+        return 0
 
     stat, patch, changed_files, comparisons = "", "", [], []
 
