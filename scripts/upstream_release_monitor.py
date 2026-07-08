@@ -672,7 +672,7 @@ def metadata_safe_comparisons(comparisons):
         safe.append(entry)
     return safe
 
-def write_run_summary(args, summary: dict, error_message: str = None):
+def write_run_summary(args, summary: dict, error_message: str | None = None):
     # Strip full diff bodies from comparisons before writing to metadata
     if "comparisons" in summary:
         summary["comparisons"] = metadata_safe_comparisons(summary["comparisons"])
