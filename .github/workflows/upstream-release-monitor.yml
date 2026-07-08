@@ -81,16 +81,25 @@ jobs:
             args+=(--force)
           fi
 
+          set +e
           python3 scripts/upstream_release_monitor.py "${args[@]}"
-
-          if [[ ! -f artifacts/upstream-monitor-report.md ]]; then
-            echo "::error::Monitor did not produce expected report artifact."
-            # fail softly in bash session but this will fail the action
-            false
-          fi
+          script_rc=$?
+          set -e
 
           echo "## Upstream monitor summary" >> "$GITHUB_STEP_SUMMARY"
-          echo "Monitor executed successfully." >> "$GITHUB_STEP_SUMMARY"
+
+          if [[ -f artifacts/upstream-monitor-report.md ]]; then
+            cat artifacts/upstream-monitor-report.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::error::Monitor did not produce upstream-monitor-report.md" >&2
+          fi
+
+          if [[ ! -s artifacts/metadata.json ]]; then
+            echo "::error::Monitor did not produce metadata.json" >&2
+            exit 1
+          fi
+
+          exit "$script_rc"
 
       - name: Upload artifacts
         if: always()

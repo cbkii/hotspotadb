@@ -1,0 +1,175 @@
+diff --git a/tmp/tmpez51x0vm b/README.md
+index 391fce8..d537427 100644
+--- a/tmp/tmpez51x0vm
++++ b/README.md
+@@ -1,70 +1,131 @@
+-<!-- markdownlint-disable MD033 MD041 -->
+-<img src="screen1.png" alt="Hotspot settings screen" align="right" width="220">
++<div align="center">
++  <img src="screenshot.png" alt="Hotspot Wireless Debugging screen" width="420" />
+
+ # Hotspot Wireless Debugging
+
+-Xposed module that makes Wireless Debugging (ADB over Wi-Fi) work over Wi-Fi Hotspot on Android 15/16.
++Use Android Wireless Debugging (ADB over Wi‑Fi with pairing/TLS) while your phone is the hotspot host.
++</div>
+
+-Android 11+ only enables Wireless Debugging when the device is connected to Wi-Fi as a client. This module removes that restriction so hotspot guests can connect via ADB.
++## What this module does
+
+-## Requirements
++Android normally expects the phone to be connected to Wi‑Fi as a client before Wireless Debugging can stay enabled.
++
++This module changes that behavior so Wireless Debugging can stay available when your phone is running a hotspot (SoftAP).
++
++## Who this is for
+
+-- Android 15/16
+-- Magisk or other Zygisk implementation
+-- LSPosed/Vector
++- You tether other devices to your phone hotspot
++- You want native Wireless Debugging (pair + connect), not plain `adb tcpip`
++- You use a rooted phone with an Xposed-compatible framework
+
+-### Tested configurations
++## Compatibility (current baseline)
+
+-| Device | Android | ROM | Zygisk | Xposed |
+-| --- | --- | --- | --- | -- |
+-| enchilada | 15 | LineageOS 22.2 | Magisk 30.7 </br> NeoZygisk 2.3 | LSPosed 1.9.2 </br> Vector 2.0 |
+-| tucana | 16 | LineageOS 23.2 | Magisk 30.7 | Vector 2.0 |
++- Android: **15 supported**
++- Android: **16 expected to work** (framework-side branch drift still possible)
++- Module type: **libxposed API 101 module**
++- Scopes required: `android` and `com.android.settings`
+
+-If this module works (or not) on your device/ROM, please [open an issue](https://github.com/droserasprout/io.drsr.hotspotadb/issues).
++## Requirements
+
+-## Installation
++- Rooted device
++- Zygisk-enabled environment (Magisk or KernelSU setup)
++- Compatible Xposed runtime
+
+-Grab the APK from Xposed Module Repo, [GitHub Releases](https://github.com/droserasprout/io.drsr.hotspotadb/releases), or [build from source](#building-from-source).
++## Install
+
+-1. Install the APK
+-2. Enable the module in LSPosed for two scopes:
++1. Download the latest APK from [Releases](https://github.com/cbkii/hotspotadb/releases).
++2. Install the APK.
++3. Enable the module for both scopes:
++   - `android`
+    - `com.android.settings`
+-   - `android` (System Framework)
+-3. Reboot
++4. Reboot.
++
++## Use
++
++1. Turn on hotspot.
++2. Open hotspot settings or Developer options and enable Wireless Debugging.
++3. Pair from client:
++   - `adb pair <ip>:<pairing_port> <pairing_code>`
++4. Connect:
++   - `adb connect <ip>:<port>`
+
+-## Usage
++## Host-to-client ADB over hotspot
+
+-1. Enable Wi-Fi Hotspot
+-2. Use the Wireless Debugging toggle on the hotspot settings screen, or go to Developer Options > Wireless Debugging
+-3. On the first connection, pair your client device: `adb pair <ip>:<pairing_port> <pairing_code>`
+-4. Connect: `adb connect <ip>:<port>`
++You can also connect _from_ the Pixel host _to_ another Android device connected to the hotspot. The hotspotadb core module enables the host's own Wireless Debugging over hotspot, while host-to-client control additionally requires a local adb client on the host (like Termux) and Wireless Debugging enabled on the target client device.
+
+-### Fixed IP/port (optional)
++1. Ensure the target client device is connected to the Pixel host's hotspot.
++2. Enable Wireless Debugging on the target client device.
++3. Use Termux on the Pixel host to pair and connect to the client device's IP and port (e.g., `adb pair <client_ip>:<pairing_port>` and `adb connect <client_ip>:<port>`). Note: automatic discovery may not work over hotspots; direct IP:port is required.
++
++See the [Host-to-Client ADB Architecture Note](docs/host-to-client-adb.md) for full details, and use the included diagnostic script `tools/hotspotadb-adb-netcheck.sh` if you need help finding IPs or checking adb readiness.
++
++## Troubleshooting (quick)
++
++Check logs:
++
++```bash
++adb logcat -s HotspotAdb
++```
+
+-<img src="screen2.png" alt="Fixes IP/port setting" align="right" width="220">
++If it fails, include these in your bug report:
+
+-Flip **Fixed IP/port** to always listen on `192.168.49.1:5555`. Lets you script the command without needing mDNS in your `adb` build. Pairing still uses the ephemeral port shown on screen (one-time step).
++- device model
++- Android version
++- ROM
++- root + framework versions
++- relevant `HotspotAdb` logs
+
+-How it works:
++## Advanced technical notes
+
+-- `192.168.49.1/24` is aliased on the hotspot interface via netd (secondary address)
+-- A TCP proxy in `system_server` listens on `:5555` and forwards to adbd's ephemeral TLS port (TLS is end-to-end, proxy is just a byte pipe)
++### Hook domains
+
+-Trade-off: if your upstream network also uses `192.168.49.0/24`, leave this feature off to avoid routing collisions.
++1. **Settings process** (`com.android.settings`)
++   - keeps UI enabled in hotspot mode
++   - shows hotspot-side IP for ADB
++   - injects hotspot settings entry behavior
++2. **Framework process** (`android` / `system_server`)
++   - supplies hotspot connection info to ADB internals
++   - blocks framework network-change paths that otherwise disable hotspot wireless debugging
+
+-## Building from source
++### Behavior details
+
+-Requires JDK 21 and Android SDK.
++- Trust identity uses a synthetic stable BSSID to avoid trust reset on each hotspot cycle.
++- Hotspot detection and IP discovery are heuristic by design.
+
+-```shell
+-make build     # debug APK
+-make install   # install via Gradle
+-make clean
++## Upstream monitoring
++
++This standalone repo does not rely on GitHub fork-network status for sync awareness. Instead, `.github/workflows/upstream-release-monitor.yml` checks upstream releases on a schedule and opens/updates triage issues only when needed.
++
++How suppression works:
++
++- tags listed in `.github/upstream-release-resolved-tags.txt` are skipped
++- closed issues for the same upstream tag are treated as resolved
++- unchanged reruns are deduplicated via a fingerprint marker
++- already-integrated/trivial diffs are suppressed unless force mode is used
++
++Manual run options (Actions > Upstream Release Monitor):
++
++- `upstream_repo`: override monitored upstream
++- `upstream_tag`: replay a specific tag
++- `include_prerelease`: include prereleases in auto-selection
++- `force`: bypass suppression heuristics for operator verification
++
++## Build from source
++
++Requires JDK 21 and Android SDK API 36.
++
++```bash
++./gradlew ktlintCheck detekt assembleDebug
+ ```
+
+-## Other solutions
++## Acknowledgements
++
++This project started from the original work by **Dr. Serasprout** and contributors.
++
++- Original upstream project: [droserasprout/io.drsr.hotspotadb](https://github.com/droserasprout/io.drsr.hotspotadb)
++- Upstream contributors: [Contributors graph](https://github.com/droserasprout/io.drsr.hotspotadb/graphs/contributors)
+
+-[Magisk-WiFiADB](https://github.com/mrh929/magisk-wifiadb) — enables legacy `adb tcpip` on boot. Simpler (Magisk only, any Android), but unencrypted and not hotspot-aware.
++Thank you to the upstream maintainers and contributors for the foundation this standalone repository builds on.
+
+ ## License

@@ -123,16 +123,31 @@ class TestUpstreamReleaseMonitor(unittest.TestCase):
         self.assertEqual(result[1]["tag_name"], "1.0.2")
 
     def test_normalize_release_payload_garbage(self):
-        payload = [[{"tag_name": "1.1.0"}], "bad", {"tag_name": "unexpected-flat"}]
+        payload = [
+            [{"tag_name": "1.1.0"}],
+            "bad",
+            {"message": "rate limit or API error"},
+            {"tag_name": "unexpected-flat"}
+        ]
         result = urm.normalize_release_payload(payload)
-        # Assuming the fallback or mixed scenario isn't an array of arrays
-        # The code will do: return [release for release in raw if isinstance(release, dict)]
-        # However, the code has:
-        # if all(isinstance(page, list) for page in raw): ...
-        # If mixed, it won't be all lists, so it will fall to the bottom list comprehension.
-        # So it will extract just the dicts from the top-level list.
-        self.assertEqual(len(result), 1)
-        self.assertEqual(result[0]["tag_name"], "unexpected-flat")
+        self.assertEqual(len(result), 2)
+        self.assertEqual([r["tag_name"] for r in result], ["1.1.0", "unexpected-flat"])
+
+    def test_parse_name_status_z(self):
+        output = "M\x00file1.txt\x00A\x00file2.txt\x00D\x00file3.txt\x00R100\x00old.txt\x00new.txt\x00C100\x00src.txt\x00dst.txt\x00\x00"
+        result = urm.parse_name_status_z(output)
+
+        self.assertEqual(len(result), 5)
+        self.assertEqual(result[0], {"status": "modified", "path": "file1.txt"})
+        self.assertEqual(result[1], {"status": "added", "path": "file2.txt"})
+        self.assertEqual(result[2], {"status": "deleted", "path": "file3.txt"})
+        self.assertEqual(result[3], {"status": "renamed", "old_path": "old.txt", "path": "new.txt"})
+        self.assertEqual(result[4], {"status": "copied", "old_path": "src.txt", "path": "dst.txt"})
+
+    def test_parse_name_status_z_malformed(self):
+        output = "M\x00file1.txt\x00R100\x00old.txt\x00" # Missing new_path
+        result = urm.parse_name_status_z(output)
+        self.assertEqual(len(result), 1) # Should only parse the first valid entry
 
     @patch('upstream_release_monitor.run_cmd')
     def test_get_releases_slurped(self, mock_run_cmd):
@@ -153,6 +168,19 @@ class TestUpstreamReleaseMonitor(unittest.TestCase):
         self.assertEqual(releases_pre[0]["tag_name"], "1.1.0")
         self.assertEqual(releases_pre[1]["tag_name"], "1.1.0-beta")
 
+    def test_normalize_release_payload_not_list(self):
+        self.assertEqual(urm.normalize_release_payload({"message": "error"}), [])
+
+    def test_resolve_tags_malformed_release(self):
+        args = DummyArgs()
+        with patch('upstream_release_monitor.get_releases') as mock_get:
+            mock_get.return_value = [{"not_tag": "bad"}, {"tag_name": "1.1.0"}]
+            head, base = urm.resolve_tags(args)
+            self.assertEqual(head, "1.1.0")
+
+    def test_run_cmd_empty(self):
+        with self.assertRaises(ValueError):
+            urm.run_cmd([])
 
 if __name__ == '__main__':
     unittest.main()
