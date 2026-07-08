@@ -63,7 +63,9 @@ class TestUpstreamReleaseMonitor(unittest.TestCase):
             comparisons,
             [],
             [],
-            "fakefingerprint123"
+            "fakefingerprint123",
+            "fakecommit",
+            "main"
         )
 
         self.assertIn("1.0.2...1.1.0", md)
@@ -73,12 +75,12 @@ class TestUpstreamReleaseMonitor(unittest.TestCase):
         self.assertIn("```diff\ndiff --git a b\n```", md)
 
     def test_fingerprint_stability(self):
-        comparisons = [{"upstream_path": "a", "local_path": "a", "local_status": "identical"}]
+        comparisons = [{"upstream_path": "a", "local_path": "a", "local_status": "identical", "diff": ""}]
         fp1 = urm.generate_fingerprint("upstream", "base", "head", "repo", "branch", "diffstat", comparisons)
         fp2 = urm.generate_fingerprint("upstream", "base", "head", "repo", "branch", "diffstat", comparisons)
         self.assertEqual(fp1, fp2)
 
-        comparisons2 = [{"upstream_path": "a", "local_path": "a", "local_status": "differs"}]
+        comparisons2 = [{"upstream_path": "a", "local_path": "a", "local_status": "differs", "diff": "diff"}]
         fp3 = urm.generate_fingerprint("upstream", "base", "head", "repo", "branch", "diffstat", comparisons2)
         self.assertNotEqual(fp1, fp3)
 
@@ -89,17 +91,19 @@ class TestUpstreamReleaseMonitor(unittest.TestCase):
             f.write("1.0.0\n")
             f.write("v1.1.0\n")
             f.write("owner/repo@1.2.0\n")
+            f.write("owner/repo@1.3.0..1.4.0\n")
 
-        self.assertTrue(urm.check_resolved_tags("owner/repo", "1.0.0"))
-        self.assertTrue(urm.check_resolved_tags("owner/repo", "v1.0.0"))
-        self.assertTrue(urm.check_resolved_tags("owner/repo", "1.1.0"))
-        self.assertTrue(urm.check_resolved_tags("owner/repo", "1.2.0"))
-        self.assertFalse(urm.check_resolved_tags("owner/repo", "1.3.0"))
+        self.assertTrue(urm.check_resolved_tags("owner/repo", "1.0.0", "0.9.0"))
+        self.assertTrue(urm.check_resolved_tags("owner/repo", "v1.0.0", "v0.9.0"))
+        self.assertTrue(urm.check_resolved_tags("owner/repo", "1.1.0", "1.0.0"))
+        self.assertTrue(urm.check_resolved_tags("owner/repo", "1.2.0", "1.1.0"))
+        self.assertTrue(urm.check_resolved_tags("owner/repo", "1.4.0", "1.3.0"))
+        self.assertFalse(urm.check_resolved_tags("owner/repo", "1.5.0", "1.4.0"))
 
     def test_file_mapping(self):
         with open('test.txt', 'w') as f:
             f.write('hi')
-        comparisons = urm.compare_local_files([{"status": "modified", "path": "test.txt"}], "head")
+        comparisons = urm.compare_local_files([{"status": "modified", "path": "test.txt"}], "head", self.test_dir)
         self.assertEqual(comparisons[0]["local_path"], "test.txt")
         os.remove("test.txt")
 
