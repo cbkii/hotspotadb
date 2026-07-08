@@ -21,7 +21,8 @@ def run_cmd(
     if ok_codes is None:
         ok_codes = {0}
     try:
-        result = subprocess.run(
+        # sourcery skip: subprocess-run-check
+        result = subprocess.run(  # nosec
             cmd,
             check=False,
             timeout=timeout,
