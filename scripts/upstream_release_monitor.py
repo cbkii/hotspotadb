@@ -46,7 +46,7 @@ def run_cmd(
         raise
 
 def get_releases(upstream_repo, include_prerelease=False):
-    cmd = ["gh", "api", f"repos/{upstream_repo}/releases", "--paginate"]
+    cmd = ["gh", "api", f"repos/{upstream_repo}/releases", "--paginate", "--slurp"]
     result = run_cmd(cmd, check=True)
     try:
         releases = json.loads(result.stdout)
@@ -63,6 +63,7 @@ def get_releases(upstream_repo, include_prerelease=False):
         eligible_releases.append(r)
 
     return eligible_releases
+
 
 def resolve_tags(args):
     head_tag = args.head_tag
