@@ -218,7 +218,7 @@ def compare_local_files(changed_files, head_ref, out_dir):
             comp["local_status"] = "missing"
         else:
             # Get upstream latest file content as bytes
-            res_raw = subprocess.run(["git", "show", f"{head_ref}:{upstream_path}"], capture_output=True)
+            res_raw = subprocess.run(["git", "show", f"{head_ref}:{upstream_path}"], capture_output=True, shell=False, check=False)
             if res_raw.returncode == 0:
                 upstream_content = res_raw.stdout
                 with open(local_path, "rb") as local_f:
