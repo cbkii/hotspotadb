@@ -128,6 +128,9 @@ class TestUpstreamReleaseMonitor(unittest.TestCase):
             f.write('{"src/test.txt": "app/test.txt"}')
 
         urm.run_cmd(["git", "init"])
+        # Configure local git user to avoid commit failures in CI
+        urm.run_cmd(["git", "config", "user.email", "test@example.com"])
+        urm.run_cmd(["git", "config", "user.name", "Test User"])
         os.makedirs("app")
         with open("app/test.txt", "w") as f:
             f.write("local content\n")
