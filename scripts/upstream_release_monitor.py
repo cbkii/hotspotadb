@@ -57,6 +57,16 @@ def run_cmd(
         print(f"::error::Command timed out: {cmd_str}")
         raise
 
+import re
+
+def validate_repo_format(repo: str) -> None:
+    if not repo or not re.match(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$", repo):
+        raise ValueError(f"Invalid repository format: {repo}")
+
+def validate_git_ref(ref: str) -> None:
+    if not ref or not re.match(r"^[A-Za-z0-9_./-]+$", ref) or ref.startswith("-"):
+        raise ValueError(f"Invalid git ref: {ref}")
+
 def normalize_release_payload(raw):
     """
     Normalizes GitHub API release payloads into a flat list of valid release dictionaries.
@@ -81,43 +91,61 @@ def normalize_release_payload(raw):
     return releases
 
 
-def get_releases(upstream_repo, include_prerelease=False):
-    cmd = ["gh", "api", f"repos/{upstream_repo}/releases", "--paginate", "--slurp"]
-    try:
-        result = run_cmd(cmd, check=True, timeout=60.0)
-    except subprocess.CalledProcessError as e:
-        print(f"::error::Failed to fetch releases from GitHub API: {e}")
-        raise
-
-    try:
-        raw = json.loads(result.stdout)
-    except json.JSONDecodeError:
-        print("::error::Failed to decode releases JSON from GitHub API.")
-        raise ValueError("Invalid JSON from GitHub API")
-
-    releases = normalize_release_payload(raw)
-
-    if not releases:
-        print("::warning::GitHub releases API returned no release objects.")
-
+def get_releases_paginated(upstream_repo, include_prerelease=False, max_pages=10):
     eligible_releases = []
-    for r in releases:
-        if r.get("draft"):
-            continue
-        if r.get("prerelease") and not include_prerelease:
-            continue
-        eligible_releases.append(r)
+    page = 1
+
+    while page <= max_pages:
+        cmd = ["gh", "api", f"repos/{upstream_repo}/releases?per_page=100&page={page}"]
+        try:
+            result = run_cmd(cmd, check=True, timeout=60.0)
+        except subprocess.CalledProcessError as e:
+            print(f"::error::Failed to fetch releases from GitHub API: {e}")
+            raise
+
+        try:
+            raw = json.loads(result.stdout)
+        except json.JSONDecodeError:
+            print("::error::Failed to decode releases JSON from GitHub API.")
+            raise ValueError("Invalid JSON from GitHub API")
+
+        if not raw:
+            break
+
+        releases = normalize_release_payload(raw)
+
+        for r in releases:
+            if r.get("draft"):
+                continue
+            if r.get("prerelease") and not include_prerelease:
+                continue
+            eligible_releases.append(r)
+
+        # Check if there is a next page using headers (gh api doesn't easily expose this, so we just check if we got 100)
+        if len(raw) < 100:
+            break
+
+        page += 1
 
     return eligible_releases
-
 
 def resolve_tags(args):
     head_tag = args.head_tag
     base_tag = args.base_tag
 
+    if head_tag:
+        validate_git_ref(head_tag)
+    if base_tag:
+        validate_git_ref(base_tag)
+
+    # We need to fetch releases if:
+    # - head_tag is not provided (we need the latest eligible)
+    # - base_tag is not provided AND we intend to find the preceding release automatically
+    # Wait, the instruction says: "An invalid explicit base is an error, not a silent downgrade."
+
     releases = None
     if not head_tag or not base_tag:
-        releases = get_releases(args.upstream_repo, args.include_prerelease)
+        releases = get_releases_paginated(args.upstream_repo, args.include_prerelease)
 
     if not head_tag:
         if not releases:
@@ -128,11 +156,8 @@ def resolve_tags(args):
             if head_tag:
                 break
 
-    if not base_tag:
-        if not releases:
-            # Re-check in case it was somehow empty but not fetched (though earlier logic prevents this)
-            releases = get_releases(args.upstream_repo, args.include_prerelease)
-
+    if not base_tag and args.base_tag is None:
+        # We need to find the preceding release automatically
         found_head = False
         for r in releases:
             t = r.get("tag_name")
@@ -145,7 +170,12 @@ def resolve_tags(args):
                 found_head = True
 
         if not base_tag:
-            print(f"::warning::Could not find a previous release for {head_tag}. Diff might be incomplete.")
+            print(f"::warning::Could not find a previous release for {head_tag}. Operating against empty tree.")
+            # We don't set base_tag here. Later logic will handle empty base.
+
+    if args.base_tag and not base_tag:
+        # If an explicit base tag was provided but we failed to find it? No, if it was explicit, it is already base_tag.
+        pass
 
     return head_tag, base_tag
 
@@ -177,7 +207,8 @@ def fetch_upstream(upstream_repo, head_tag, base_tag) -> FetchResult:
             if res2.returncode == 0:
                 base_fetched = True
             else:
-                print(f"::warning::Failed to fetch base tag {base_tag}")
+                print(f"::error::Failed to fetch base tag {base_tag}")
+                raise RuntimeError(f"Failed to fetch explicit base tag {base_tag}")
 
     print(f"Fetching head tag {head_tag}...")
     res = run_cmd(["git", "fetch", "--no-tags", "upstream", f"+refs/tags/{head_tag}:refs/upstream-monitor/head"], check=False)
@@ -190,13 +221,7 @@ def fetch_upstream(upstream_repo, head_tag, base_tag) -> FetchResult:
             head_fetched = True
         else:
             print(f"::error::Failed to fetch head tag {head_tag}")
-
-    if head_fetched:
-        print("Checking if we need to unshallow...")
-        res = run_cmd(["git", "rev-parse", "--is-shallow-repository"], check=False)
-        if res.stdout.strip() == "true":
-             print("Unshallowing...")
-             run_cmd(["git", "fetch", "--unshallow", "upstream"], check=False)
+            raise RuntimeError(f"Failed to fetch explicit head tag {head_tag}")
 
     return FetchResult(base_fetched, head_fetched, "refs/upstream-monitor/base" if base_fetched else None, "refs/upstream-monitor/head" if head_fetched else None)
 
@@ -365,7 +390,7 @@ def get_commits_and_prs(upstream_repo, base_ref, head_ref, max_pr_lookups):
                         "merged_at": pr.get("merged_at", ""),
                         "body": pr.get("body", "") or ""
                     })
-            except Exception:
+            except json.JSONDecodeError:
                 pass
 
     unique_prs = {pr["number"]: pr for pr in prs}.values()
@@ -387,12 +412,23 @@ def truncate_text(text, max_len=1000):
 def build_markdown(args, upstream_repo, base_tag, head_tag, stat, patch, changed_files, comparisons, commits, prs, fingerprint, local_commit, branch):
     run_url = f"https://github.com/{args.repo}/actions/runs/{os.environ.get('GITHUB_RUN_ID', 'local')}"
 
+    # Escape markdown helpers
+    def esc_md(text):
+        if not text: return ""
+        text = str(text).replace('|', '\\|')
+        text = text.replace('<', '&lt;').replace('>', '&gt;')
+        return text
+
+    def clean_fence(text):
+        if not text: return ""
+        return str(text).replace("```", "'''")
+
     md = [
         "A new upstream release/change range was detected.",
         "",
         "## Summary",
         "",
-        f"- Upstream repo: {upstream_repo}",
+        f"- Upstream repo: {esc_md(upstream_repo)}",
     ]
     if base_tag:
         md.append(f"- Release range: {base_tag}...{head_tag}")
@@ -411,20 +447,23 @@ def build_markdown(args, upstream_repo, base_tag, head_tag, stat, patch, changed
     ])
 
     # Release notes
-    try:
-        rel_res = run_cmd(["gh", "api", f"repos/{upstream_repo}/releases/tags/{head_tag}"], check=False)
-        if rel_res.returncode == 0:
+    rel_res = run_cmd(["gh", "api", f"repos/{upstream_repo}/releases/tags/{head_tag}"], check=False)
+    if rel_res.returncode == 0:
+        try:
             rel = json.loads(rel_res.stdout)
             md.extend([
                 "## Release notes",
                 "",
-                f"**{rel.get('name', head_tag)}** ({rel.get('published_at', '')})",
+                f"**{esc_md(rel.get('name', head_tag))}** ({esc_md(rel.get('published_at', ''))})",
                 f"[Release URL]({rel.get('html_url', '')})",
                 "",
-                truncate_text(rel.get('body', ''), 2000),
+                "```text",
+                clean_fence(truncate_text(rel.get('body', ''), 2000)),
+                "```",
                 ""
             ])
-    except Exception: pass
+        except json.JSONDecodeError as e:
+            print(f"::warning::Failed to decode release notes JSON: {e}")
 
     md.extend([
         "## Upstream commit context",
@@ -433,7 +472,7 @@ def build_markdown(args, upstream_repo, base_tag, head_tag, stat, patch, changed
     for c in commits[:20]:
         short_sha = c["sha"][:7]
         url = f"https://github.com/{upstream_repo}/commit/{c['sha']}"
-        md.append(f"- [{short_sha}]({url}) {c['msg']}")
+        md.append(f"- [{short_sha}]({url}) {esc_md(c['msg'])}")
     if len(commits) > 20:
         md.append(f"- ... and {len(commits) - 20} more commits.")
     md.append("")
@@ -444,9 +483,14 @@ def build_markdown(args, upstream_repo, base_tag, head_tag, stat, patch, changed
             ""
         ])
         for pr in prs:
-            md.append(f"- [#{pr['number']}]({pr['url']}) **{pr['title']}** by @{pr['author']}")
+            md.append(f"- [#{pr['number']}]({pr['url']}) **{esc_md(pr['title'])}** by @{esc_md(pr['author'])}")
             if pr['body']:
-                md.append(f"  > {truncate_text(pr['body'], 200).replace(chr(10), ' ')}")
+                # Wrap PR text in code blocks to prevent active @mentions
+                md.extend([
+                    "```text",
+                    clean_fence(truncate_text(pr['body'], 200)),
+                    "```"
+                ])
         md.append("")
 
     md.extend([
@@ -474,7 +518,7 @@ def build_markdown(args, upstream_repo, base_tag, head_tag, stat, patch, changed
         up_prev = f"[link]({u_url_base})" if u_url_base and c['upstream_status'] not in ('added', 'copied') else "N/A"
         up_latest = f"[link]({u_url_head})" if c['upstream_status'] != 'deleted' else "N/A"
 
-        md.append(f"| {c['upstream_status']} | `{c['upstream_path']}` | `{c['local_path']}` | {up_latest} | {up_prev} | [link]({local_url}) |")
+        md.append(f"| {esc_md(c['upstream_status'])} | `{esc_md(c['upstream_path'])}` | `{esc_md(c['local_path'])}` | {up_latest} | {up_prev} | [link]({local_url}) |")
 
     md.extend([
         "",
@@ -505,7 +549,7 @@ def build_markdown(args, upstream_repo, base_tag, head_tag, stat, patch, changed
     ])
 
     for c in comparisons:
-        md.append(f"### `{c['upstream_path']}`")
+        md.append(f"### `{esc_md(c['upstream_path'])}`")
         up_path_quoted = urllib.parse.quote(c['upstream_path'], safe="/")
         u_url = f"https://github.com/{upstream_repo}/blob/{head_tag}/{up_path_quoted}"
 
@@ -514,7 +558,7 @@ def build_markdown(args, upstream_repo, base_tag, head_tag, stat, patch, changed
 
         md.append(f"- Upstream latest: [link]({u_url})")
         md.append(f"- Local equivalent: [link]({l_url})")
-        md.append(f"- Status: {c['local_status']}")
+        md.append(f"- Status: {esc_md(c['local_status'])}")
         md.append("")
         if c['diff']:
             f_diff = c['diff']
@@ -522,7 +566,7 @@ def build_markdown(args, upstream_repo, base_tag, head_tag, stat, patch, changed
                 f_diff = f_diff[:2000] + "\n... (truncated)"
             md.extend([
                 "```diff",
-                f_diff,
+                clean_fence(f_diff),
                 "```",
                 ""
             ])
@@ -552,7 +596,7 @@ def build_markdown(args, upstream_repo, base_tag, head_tag, stat, patch, changed
 
     return "\n".join(md)
 
-def check_resolved_tags(upstream_repo, head_tag, base_tag):
+def check_resolved_tags(upstream_repo, head_tag, base_tag, default_upstream="droserasprout/io.drsr.hotspotadb"):
     resolved_file = ".github/upstream-release-resolved-tags.txt"
     if not os.path.exists(resolved_file):
         return False
@@ -560,7 +604,7 @@ def check_resolved_tags(upstream_repo, head_tag, base_tag):
     try:
         with open(resolved_file, "r", encoding="utf-8") as f:
             lines = f.readlines()
-    except Exception:
+    except OSError:
         return False
 
     for line in lines:
@@ -568,16 +612,23 @@ def check_resolved_tags(upstream_repo, head_tag, base_tag):
         if not line or line.startswith("#"):
             continue
 
-        if line == head_tag or line == f"v{head_tag}" or f"v{line}" == head_tag:
+        is_default = (upstream_repo == default_upstream)
+
+        # Exact matching grammar
+        # 1. <tag>
+        if is_default and line == head_tag:
             return True
 
+        # 2. <owner/repo>@<tag>
         if line == f"{upstream_repo}@{head_tag}":
             return True
 
         if base_tag:
-            if line == f"{upstream_repo}@{base_tag}..{head_tag}":
+            # 3. <base>..<head>
+            if is_default and line == f"{base_tag}..{head_tag}":
                 return True
-            if line == f"{base_tag}..{head_tag}":
+            # 4. <owner/repo>@<base>..<head>
+            if line == f"{upstream_repo}@{base_tag}..{head_tag}":
                 return True
 
     return False
@@ -587,75 +638,109 @@ def manage_issue(args, title, body, fingerprint, head_tag, base_tag):
         print("Dry run: skipping issue creation/update.")
         return "dry_run"
 
-    if not args.force and check_resolved_tags(args.upstream_repo, head_tag, base_tag):
-        print(f"Skipping: {head_tag} is marked as resolved in .github/upstream-release-resolved-tags.txt")
-        return "skipped_resolved"
+    # Use a deterministic machine key
+    identity_key = hashlib.sha256(f"{args.upstream_repo}|{head_tag}".encode('utf-8')).hexdigest()
+    identity_marker = f"<!-- upstream-monitor:identity:{identity_key} -->"
 
-    search_query = f"{title} in:title"
+    # We embed this marker into the body so it's always found
+    full_body = body + f"\n\n{identity_marker}"
 
-    open_res = run_cmd(["gh", "issue", "list", "--repo", args.repo, "--state", "open", "--search", search_query, "--json", "number", "--jq", ".[0].number // \"\""], check=False)
-    open_num = open_res.stdout.strip() if open_res.returncode == 0 else ""
+    # Search for any issue containing the identity marker OR the exact title (for migration)
+    search_query = f'"{identity_marker}" in:body'
 
-    if open_num:
-        view_res = run_cmd(["gh", "issue", "view", open_num, "--repo", args.repo, "--comments", "--json", "comments,body"], check=False)
+    # gh issue list returns a JSON array.
+    # We fetch all matching issues (should be 1 or 0)
+    list_res = run_cmd(["gh", "issue", "list", "--repo", args.repo, "--state", "all", "--search", search_query, "--json", "number,state,title", "--limit", "10"], check=False)
+
+    existing_issue = None
+    if list_res.returncode == 0:
+        try:
+            issues = json.loads(list_res.stdout)
+            if issues:
+                # prefer exact marker match
+                existing_issue = issues[0]
+        except json.JSONDecodeError:
+            pass
+
+    # Migration path: if not found by marker, check by exact title
+    if not existing_issue:
+        title_search_query = f'"{title}" in:title'
+        title_res = run_cmd(["gh", "issue", "list", "--repo", args.repo, "--state", "all", "--search", title_search_query, "--json", "number,state,title", "--limit", "10"], check=False)
+        if title_res.returncode == 0:
+            try:
+                issues = json.loads(title_res.stdout)
+                for issue in issues:
+                    if issue["title"] == title:
+                        existing_issue = issue
+                        break
+            except json.JSONDecodeError:
+                pass
+
+    if existing_issue:
+        issue_num = existing_issue["number"]
+        issue_state = existing_issue["state"]
+
+        # If it is closed, and we're not forced, and it's marked resolved, keep it closed.
+        # But wait, earlier logic already checked `check_resolved_tags()`.
+        # The instruction says: "A closed canonical tracking issue is resolved and should stay closed during normal scheduled runs. --force may explicitly reopen/update it."
+        if issue_state == "CLOSED" and not args.force:
+            print(f"Skipping: issue #{issue_num} is closed (treated as resolved).")
+            return "skipped_closed"
+
+        view_res = run_cmd(["gh", "issue", "view", str(issue_num), "--repo", args.repo, "--json", "body"], check=False)
         if view_res.returncode == 0:
             import re
-            content = view_res.stdout
+            content = json.loads(view_res.stdout).get("body", "")
             match = re.search(r"<!-- upstream-monitor:fingerprint:([a-f0-9]{64}) -->", content)
             if match and match.group(1) == fingerprint and not args.force:
-                print(f"Skipping: issue #{open_num} is up to date (fingerprint match).")
+                print(f"Skipping: issue #{issue_num} is up to date (fingerprint match).")
                 return "skipped_duplicate"
 
-        print(f"Updating existing issue #{open_num}...")
+        print(f"Updating existing issue #{issue_num}...")
 
         with tempfile.NamedTemporaryFile(delete=False, suffix=".md", mode="w", encoding="utf-8") as body_file:
-            body_file.write(body)
+            body_file.write(full_body)
             body_path = body_file.name
 
         try:
-            # Try to edit body
-            edit_res = run_cmd(["gh", "issue", "edit", open_num, "--repo", args.repo, "--body-file", body_path], check=False)
+            # Try to edit canonical body
+            edit_res = run_cmd(["gh", "issue", "edit", str(issue_num), "--repo", args.repo, "--body-file", body_path], check=False)
             if edit_res.returncode == 0:
                  print("Issue updated.")
+
+                 if issue_state == "CLOSED":
+                     reopen_res = run_cmd(["gh", "issue", "reopen", str(issue_num), "--repo", args.repo], check=False)
+                     if reopen_res.returncode == 0:
+                         print(f"Reopened issue #{issue_num}.")
+                         return "reopened_updated"
+                     else:
+                         print(f"::error::Failed to reopen issue #{issue_num}.")
+                         return "failed"
+
+                 return "updated"
             else:
-                 # fallback to comment
-                 run_cmd(["gh", "issue", "comment", open_num, "--repo", args.repo, "--body-file", body_path], check=True)
-            return "updated"
+                 print(f"::error::Failed to edit canonical issue body for #{issue_num}. Failing the run.")
+                 return "failed"
         except subprocess.CalledProcessError:
             print("::error::Failed to update issue.")
             return "failed"
         finally:
             os.remove(body_path)
     else:
-        # Check closed issues. If not resolved, reopen/recreate.
-        closed_res = run_cmd(["gh", "issue", "list", "--repo", args.repo, "--state", "closed", "--search", search_query, "--json", "number", "--jq", ".[0].number // \"\""], check=False)
-        closed_num = closed_res.stdout.strip() if closed_res.returncode == 0 else ""
-
         with tempfile.NamedTemporaryFile(delete=False, suffix=".md", mode="w", encoding="utf-8") as body_file:
-            body_file.write(body)
+            body_file.write(full_body)
             body_path = body_file.name
 
         try:
-            if closed_num:
-                print(f"Reopening and updating closed issue #{closed_num} because it's not marked resolved...")
-                edit_res = run_cmd(["gh", "issue", "edit", closed_num, "--repo", args.repo, "--body-file", body_path], check=False)
-                reopen_res = run_cmd(["gh", "issue", "reopen", closed_num, "--repo", args.repo], check=False)
-                if edit_res.returncode == 0 and reopen_res.returncode == 0:
-                     print(f"Reopened and updated issue #{closed_num}.")
-                     return "reopened_updated"
-                else:
-                     print(f"::error::Failed to reopen/update issue #{closed_num}.")
-                     return "failed"
+            print("Creating new issue...")
+            create_res = run_cmd(["gh", "issue", "create", "--repo", args.repo, "--title", title, "--body-file", body_path], check=False)
+            if create_res.returncode == 0:
+                url = create_res.stdout.strip()
+                print(f"Created issue: {url}")
+                return "created"
             else:
-                print("Creating new issue...")
-                create_res = run_cmd(["gh", "issue", "create", "--repo", args.repo, "--title", title, "--body-file", body_path], check=False)
-                if create_res.returncode == 0:
-                    url = create_res.stdout.strip()
-                    print(f"Created issue: {url}")
-                    return "created"
-                else:
-                    print(f"::error::Failed to create issue: {create_res.stderr}")
-                    return "failed"
+                print(f"::error::Failed to create issue: {create_res.stderr}")
+                return "failed"
         except subprocess.CalledProcessError:
             return "failed"
         finally:
@@ -673,29 +758,58 @@ def metadata_safe_comparisons(comparisons):
     return safe
 
 def write_run_summary(args, summary: dict, error_message: str | None = None):
+    # Make a copy so we don't mutate the memory struct
+    metadata_summary = dict(summary)
+
     # Strip full diff bodies from comparisons before writing to metadata
-    if "comparisons" in summary:
-        summary["comparisons"] = metadata_safe_comparisons(summary["comparisons"])
+    if "comparisons" in metadata_summary:
+        metadata_summary["comparisons"] = metadata_safe_comparisons(metadata_summary["comparisons"])
 
-    # write metadata.json
-    with open(os.path.join(args.out_dir, "metadata.json"), "w", encoding="utf-8") as f:
-        json.dump(summary, f, indent=2)
+    # Atomically write metadata.json
+    meta_path = os.path.join(args.out_dir, "metadata.json")
+    with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False, dir=args.out_dir) as f:
+        json.dump(metadata_summary, f, indent=2)
+        tmp_meta = f.name
+    os.replace(tmp_meta, meta_path)
 
-    # write upstream-monitor-report.md
+    # write upstream-monitor-report.md if not exists (or update with error)
     report_file = os.path.join(args.out_dir, "upstream-monitor-report.md")
-    if not os.path.exists(report_file):
-        with open(report_file, "w", encoding="utf-8") as f:
+    if not os.path.exists(report_file) or error_message:
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False, dir=args.out_dir) as f:
             if error_message:
                 f.write(f"## Upstream Release Monitor Failed\n\n{error_message}\n")
             else:
                 f.write(f"## Upstream Release Monitor\n\nSkipped: {summary.get('skip_reason', 'unknown reason')}\n")
+            tmp_rep = f.name
+        os.replace(tmp_rep, report_file)
 
     # write warnings.txt if needed
     if summary.get("warnings"):
         with open(os.path.join(args.out_dir, "warnings.txt"), "w", encoding="utf-8") as f:
             f.write("\n".join(summary["warnings"]) + "\n")
 
+    # Write GITHUB_STEP_SUMMARY
+    step_summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+    if step_summary_path:
+        with open(step_summary_path, "a", encoding="utf-8") as ss:
+            ss.write(f"## Upstream monitor summary\n\n")
+            for key in ("result", "exit_code", "upstream_repo", "base_tag", "head_tag", "changed_files_count", "issue_action", "skip_reason"):
+                ss.write(f"- {key}: {summary.get(key)}\n")
+
+            if summary.get("warnings"):
+                ss.write("\n### Warnings\n")
+                for item in summary["warnings"][:10]:
+                    ss.write(f"- {item}\n")
+
+            if summary.get("errors"):
+                ss.write("\n### Errors\n")
+                for item in summary["errors"][:10]:
+                    ss.write(f"- {item}\n")
+
 def execute_monitor(args) -> dict:
+    validate_repo_format(args.repo)
+    validate_repo_format(args.upstream_repo)
+
     summary = {
         "result": "unknown",
         "exit_code": 1,
@@ -742,23 +856,51 @@ def execute_monitor(args) -> dict:
 
     stat, patch, changed_files, comparisons = "", "", [], []
 
-    # Check if we should fallback to single tag mode
+    # Early suppression check before expensive operations (if not dry run)
+    if not args.dry_run and not args.force:
+        if check_resolved_tags(args.upstream_repo, head_tag, base_tag):
+            summary["result"] = "skipped_resolved"
+            summary["skip_reason"] = "resolved_in_file"
+            summary["exit_code"] = 0
+            return summary
+
     if base_tag and fetch_res.base_fetched:
         stat, patch, changed_files = generate_diffs(fetch_res.base_ref, fetch_res.head_ref)
     else:
-        print("Base tag not fetched, operating in single-tag mode.")
-        if base_tag:
-            summary["warnings"].append(f"Base tag `{base_tag}` not fetched. Operating in single-tag mode.")
-        # Single tag mode diff generation
-        stat_res = run_cmd(["git", "show", "--stat", fetch_res.head_ref], check=True)
-        stat = stat_res.stdout
+        # Operating against empty tree (4b825dc642cb6eb9a060e54bf8d69288fbee4904)
+        empty_tree = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+        fetch_res.base_ref = empty_tree
 
-        name_status = run_cmd(["git", "diff-tree", "--root", "--no-commit-id", "--name-status", "-z", "-r", "--find-renames", fetch_res.head_ref], check=True)
-        changed_files = parse_name_status_z(name_status.stdout)
+        stat, patch, changed_files = generate_diffs(empty_tree, fetch_res.head_ref)
+
+    if not changed_files:
+        summary["result"] = "skipped_no_changes"
+        summary["skip_reason"] = "empty_upstream_delta"
+        summary["exit_code"] = 0
+        return summary
 
     summary["changed_files_count"] = len(changed_files)
     comparisons = compare_local_files(changed_files, fetch_res.head_ref, args.out_dir)
     summary["comparisons"] = comparisons
+
+    # Check for integrated suppression
+    if not args.force and not args.dry_run:
+        all_integrated = True
+        for c in comparisons:
+            if c["upstream_status"] == "deleted":
+                if c["local_status"] != "missing":
+                    all_integrated = False
+                    break
+            else:
+                if c["local_status"] != "identical":
+                    all_integrated = False
+                    break
+
+        if all_integrated:
+            summary["result"] = "skipped_integrated"
+            summary["skip_reason"] = "all_files_integrated"
+            summary["exit_code"] = 0
+            return summary
 
     with open(os.path.join(args.out_dir, "upstream-release.diff"), "w", encoding="utf-8") as f:
         f.write(patch)
