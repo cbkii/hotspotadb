@@ -38,8 +38,9 @@ object SubnetAlias {
                 )
                 return false
             }
+            val wasOwned = appliedInterface == iface && addressOwnedByModule
             appliedInterface = iface
-            addressOwnedByModule = false
+            addressOwnedByModule = wasOwned
             return true
         }
 
