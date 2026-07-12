@@ -9,7 +9,7 @@ import android.provider.Settings
 import android.util.Log
 import io.drsr.hotspotadb.compat.SettingsAppRefs
 import io.github.libxposed.api.XposedModule
-import java.lang.reflect.Method
+import java.lang.ref.WeakReference
 import java.lang.reflect.Proxy
 import java.util.Collections
 import java.util.WeakHashMap
@@ -146,7 +146,13 @@ object FixedEndpointSettingsHook {
             val fragment = chain.getThisObject()
             if (fragment != null && fragmentClass.isInstance(fragment)) {
                 runCatching { injectPreference(fragment, classLoader, module) }
-                    .onFailure { module.log(Log.ERROR, HotspotAdbModule.TAG, "HotspotAdb: fixed endpoint UI injection failed: $it") }
+                    .onFailure {
+                        module.log(
+                            Log.ERROR,
+                            HotspotAdbModule.TAG,
+                            "HotspotAdb: fixed endpoint UI injection failed: $it",
+                        )
+                    }
             }
             result
         }
@@ -256,13 +262,15 @@ object FixedEndpointSettingsHook {
         module: XposedModule,
     ) {
         if (fragmentStates.containsKey(fragment)) return
+        val appContext = context.applicationContext ?: context
+        val weakPreference = WeakReference(preference)
         val observer =
             object : ContentObserver(Handler(Looper.getMainLooper())) {
                 override fun onChange(
                     selfChange: Boolean,
                     uri: Uri?,
                 ) {
-                    updatePreference(context, preference)
+                    weakPreference.get()?.let { updatePreference(appContext, it) }
                 }
             }
         try {
@@ -271,9 +279,13 @@ object FixedEndpointSettingsHook {
                 HotspotHelper.FIXED_ENDPOINT_KEY,
                 HotspotHelper.FIXED_ENDPOINT_READY_KEY,
             ).forEach { key ->
-                context.contentResolver.registerContentObserver(Settings.Global.getUriFor(key), false, observer)
+                appContext.contentResolver.registerContentObserver(
+                    Settings.Global.getUriFor(key),
+                    false,
+                    observer,
+                )
             }
-            fragmentStates[fragment] = FragmentState(context, observer)
+            fragmentStates[fragment] = FragmentState(appContext, observer)
         } catch (e: RuntimeException) {
             module.log(Log.WARN, HotspotAdbModule.TAG, "HotspotAdb: fixed endpoint UI observer failed: $e")
         }
@@ -296,6 +308,8 @@ object FixedEndpointSettingsHook {
             val activityThread = Class.forName("android.app.ActivityThread")
             activityThread.getMethod("currentApplication").invoke(null) as? Context
         } catch (_: ReflectiveOperationException) {
+            null
+        } catch (_: SecurityException) {
             null
         }
 
