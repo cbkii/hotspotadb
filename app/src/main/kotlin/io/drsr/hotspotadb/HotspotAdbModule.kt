@@ -33,6 +33,7 @@ class HotspotAdbModule : XposedModule() {
         if (param.packageName == "com.android.settings") {
             log(Log.INFO, TAG, "HotspotAdb: installing Settings compatibility")
             SettingsHook.install(param.defaultClassLoader, this)
+            FixedEndpointSettingsHook.install(param.defaultClassLoader, this)
         }
     }
 }
