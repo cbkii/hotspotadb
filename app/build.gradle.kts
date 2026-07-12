@@ -62,4 +62,8 @@ dependencies {
     // Modern libxposed API 101 — replaces legacy de.robv.android.xposed:api:82
     compileOnly("io.github.libxposed:api:101.0.1")
     compileOnly("androidx.preference:preference:1.2.1")
+
+    testImplementation("io.github.libxposed:api:101.0.1")
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.mockito.kotlin:mockito-kotlin:5.2.1")
 }
