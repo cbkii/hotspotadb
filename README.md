@@ -94,40 +94,25 @@ If it fails, include these in your bug report:
 
 ## Upstream monitoring
 
-`.github/workflows/upstream-release-monitor.yml` checks the configured upstream at 05:25 UTC each day and can also be run manually. It resolves an exact release identity, compares one coherent Git range, and creates or updates one canonical tracking issue only when triage is needed.
+This standalone repo does not rely on GitHub fork-network status for sync awareness. Instead, `.github/workflows/upstream-release-monitor.yml` checks upstream releases on a schedule and opens/updates triage issues only when needed.
 
-Automatic stable mode uses GitHub's latest stable release and its immediately preceding eligible stable release. With prereleases enabled, stable and prerelease entries follow the GitHub releases API order. Drafts are always excluded. A genuine first release is compared with Git's empty tree; an explicitly or automatically selected base that cannot be fetched is an error rather than a silent downgrade.
+How suppression works:
 
-Suppression is deterministic:
+- tags or ranges listed in `.github/upstream-release-resolved-tags.txt` are skipped immediately
+- unchanged reruns are deduplicated via a deterministic tracking marker in the issue body
+- closed tracking issues are treated as resolved and will not be reopened
+- an empty release diff, or a release where all changed files are already identically integrated into the local repository, is skipped automatically
+- `--force` bypasses duplicate, resolved, and integrated suppression to enforce issue recreation or update
 
-- exact tags/ranges in `.github/upstream-release-resolved-tags.txt` are skipped before Git comparison work;
-- an empty upstream delta returns `skipped_no_changes`;
-- a delta whose mapped local states are all already identical/absent returns `skipped_integrated`;
-- a closed canonical tracking issue returns `skipped_closed` and stays closed;
-- an unchanged open issue fingerprint returns `skipped_duplicate`;
-- `force` bypasses resolved, integrated, closed and duplicate suppression, but never validation, API, Git or mutation errors.
+Manual run options (Actions > Upstream Release Monitor):
 
-Manual inputs under **Actions > Upstream Release Monitor**:
+- `upstream_repo`: override monitored upstream (default: `droserasprout/io.drsr.hotspotadb`)
+- `upstream_tag`: replay a specific tag as the target release
+- `upstream_base_tag`: supply a specific base tag for release-to-release diffs
+- `include_prerelease`: include prereleases in automatic latest-release selection
+- `force`: bypass suppression heuristics for operator verification
 
-- `upstream_repo`: override the default `droserasprout/io.drsr.hotspotadb` repository;
-- `upstream_tag`: use an exact head tag/ref;
-- `upstream_base_tag`: use an exact base tag/ref;
-- `include_prerelease`: include prereleases in automatic selection;
-- `force`: bypass normal suppression for an operator-requested update/reopen;
-- `dry_run`: generate the complete report and artifacts without reading or mutating tracking issues.
-
-Every result writes a stable evidence package: `metadata.json`, `upstream-monitor-report.md`, `upstream-release.diff`, `step-summary.md`, warnings/errors files, and bounded per-file comparison artifacts where applicable. The metadata records requested/resolved tags, effective refs/commits, comparison mode, result, issue action/number/URL, and diagnostics.
-
-Resolved-tag entries use strict literal grammar:
-
-```text
-<tag>
-<owner/repo>@<tag>
-<base>..<head>
-<owner/repo>@<base>..<head>
-```
-
-Bare entries apply only to the default upstream; an overridden upstream requires the tuple form. Malformed entries fail the run rather than being ignored.
+The monitor executes defensively and produces a full `metadata.json` state, `upstream-monitor-report.md`, `upstream-release.diff`, and localized file diffs as workflow artifacts on every run.
 
 ## Build from source
 
