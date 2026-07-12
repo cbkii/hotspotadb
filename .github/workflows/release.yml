@@ -200,7 +200,7 @@ jobs:
             -alias "$KEY_ALIAS" \
             -noprompt >/dev/null
 
-          printf 'keystore_path=%s\n' "$KEYSTORE_PATH" >> "$GITHUB_ENV"
+          printf 'KEYSTORE_PATH=%s\n' "$KEYSTORE_PATH" >> "$GITHUB_ENV"
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
@@ -213,7 +213,6 @@ jobs:
       - name: Build signed release APK
         shell: bash
         env:
-          KEYSTORE_PATH: ${{ env.keystore_path }}
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
