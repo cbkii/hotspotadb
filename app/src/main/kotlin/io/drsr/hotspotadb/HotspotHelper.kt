@@ -37,14 +37,11 @@ object HotspotHelper {
         return active
     }
 
-    fun isAdbWifiEnabled(context: Context): Boolean =
-        Settings.Global.getInt(context.contentResolver, ADB_WIFI_ENABLED, 0) == 1
+    fun isAdbWifiEnabled(context: Context): Boolean = Settings.Global.getInt(context.contentResolver, ADB_WIFI_ENABLED, 0) == 1
 
-    fun isFixedEndpointEnabled(context: Context): Boolean =
-        Settings.Global.getInt(context.contentResolver, FIXED_ENDPOINT_KEY, 0) == 1
+    fun isFixedEndpointEnabled(context: Context): Boolean = Settings.Global.getInt(context.contentResolver, FIXED_ENDPOINT_KEY, 0) == 1
 
-    fun isFixedEndpointReady(context: Context): Boolean =
-        Settings.Global.getInt(context.contentResolver, FIXED_ENDPOINT_READY_KEY, 0) == 1
+    fun isFixedEndpointReady(context: Context): Boolean = Settings.Global.getInt(context.contentResolver, FIXED_ENDPOINT_READY_KEY, 0) == 1
 
     fun setFixedEndpointReady(
         context: Context,
@@ -152,7 +149,7 @@ object HotspotHelper {
                 }
                 if (!acceptedAddress) rejected += "${iface.name}:no-usable-ipv4"
             }
-        } catch (e: RuntimeException) {
+        } catch (e: Exception) {
             Log.w(TAG, "HotspotAdb: interface enumeration failed: $e")
             return null
         }
