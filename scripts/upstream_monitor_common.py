@@ -215,6 +215,9 @@ def latest_stable_release(upstream_repo: str) -> dict[str, Any] | None:
     try:
         raw = api_json(f"repos/{upstream_repo}/releases/latest")
     except MonitorError as exc:
+        # A repository with no stable release returns 404. Scan only until either a
+        # stable release is found or pagination ends. If a stable release exists,
+        # the latest endpoint failure is operational and must remain visible.
         for page in range(1, MAX_RELEASE_PAGES + 1):
             releases = fetch_release_page(upstream_repo, page)
             if any(eligible_release(item, False) for item in releases):
