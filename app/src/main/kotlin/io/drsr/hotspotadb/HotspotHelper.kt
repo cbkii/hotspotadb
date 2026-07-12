@@ -99,7 +99,12 @@ object HotspotHelper {
             lower.startsWith("v4-") ||
             lower.startsWith("dummy") ||
             lower.startsWith("ip6tnl") ||
-            lower.startsWith("sit")
+            lower.startsWith("sit") ||
+            lower.startsWith("p2p") ||
+            lower.startsWith("aware") ||
+            lower.startsWith("nan") ||
+            lower.startsWith("bnep") ||
+            lower.startsWith("bt-")
         ) {
             return null
         }
