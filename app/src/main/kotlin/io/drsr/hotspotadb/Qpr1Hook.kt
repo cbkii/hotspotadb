@@ -1,8 +1,8 @@
 package io.drsr.hotspotadb
 
-import android.content.Context
 import android.util.Log
 import io.drsr.hotspotadb.compat.AdbFrameworkRefs
+import io.drsr.hotspotadb.compat.AdbHandlerContextCompat
 import io.github.libxposed.api.XposedModule
 
 /** Android 16 QPR1 compatibility for the verifyWifiNetwork trust gate. */
@@ -37,7 +37,7 @@ object Qpr1Hook {
 
         module.deoptimize(method)
         module.hook(method).intercept { chain ->
-            val context = getContext(chain.getThisObject())
+            val context = AdbHandlerContextCompat.getContext(chain.getThisObject())
             if (context == null) {
                 module.log(Log.WARN, HotspotAdbModule.TAG, "HotspotAdb: verifyWifiNetwork context unavailable; pass-through")
                 return@intercept chain.proceed()
@@ -53,15 +53,5 @@ object Qpr1Hook {
         }
         reporter.report("QPR1 trust gate", "verifyWifiNetwork", Status.INSTALLED, "hotspot accepted as trusted")
         reporter.summarize()
-    }
-
-    private fun getContext(handler: Any?): Context? {
-        handler ?: return null
-        ReflectionCompat.getFieldValueByName(handler, "mContext")?.let { return it as? Context }
-        val manager =
-            ReflectionCompat.getFieldValueByName(handler, "this\$0")
-                ?: ReflectionCompat.getFieldValueByName(handler, "mAdbDebuggingManager")
-                ?: ReflectionCompat.getFieldValueByType(handler, "com.android.server.adb.AdbDebuggingManager")
-        return manager?.let { ReflectionCompat.getFieldValueByName(it, "mContext") as? Context }
     }
 }
