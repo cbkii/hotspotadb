@@ -34,18 +34,43 @@ on:
 jobs:
   monitor-validation:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: "3.11"
 
-      - name: Run actionlint
+      - name: Install pinned actionlint
+        shell: bash
         run: |
-          bash <(curl -s https://raw.githubusercontent.com/rhysd/actionlint/v1.7.12/scripts/download-actionlint.bash) 1.7.12
-          ./actionlint -color
+          set -euo pipefail
+          install_dir="${RUNNER_TEMP}/actionlint"
+          installer="${RUNNER_TEMP}/download-actionlint.bash"
+          mkdir -p "${install_dir}"
+          curl -fsSL \
+            "https://raw.githubusercontent.com/rhysd/actionlint/914e7df21a07ef503a81201c76d2b11c789d3fca/scripts/download-actionlint.bash" \
+            -o "${installer}"
+          bash "${installer}" 1.7.12 "${install_dir}"
+          echo "${install_dir}" >> "${GITHUB_PATH}"
+
+      - name: Run actionlint
+        run: actionlint -color
+
+      - name: Install pinned Python validation tools
+        run: python3 -m pip install --disable-pip-version-check ruff==0.15.20
+
+      - name: Run Ruff
+        run: |
+          ruff check scripts/upstream_*.py tests/test_upstream_release_monitor.py
+          ruff format --check scripts/upstream_*.py tests/test_upstream_release_monitor.py
 
       - name: Run Python compile check
         run: python3 -m compileall -q scripts tests
