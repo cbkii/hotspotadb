@@ -11,6 +11,10 @@ on:
       - ".github/workflows/**"
       - "detekt.yml"
       - ".editorconfig"
+      - "scripts/**"
+      - "tests/**"
+      - ".github/upstream-release-resolved-tags.txt"
+      - ".github/upstream-file-map.json"
   pull_request:
     branches: [main]
     paths:
@@ -21,9 +25,34 @@ on:
       - ".github/workflows/**"
       - "detekt.yml"
       - ".editorconfig"
+      - "scripts/**"
+      - "tests/**"
+      - ".github/upstream-release-resolved-tags.txt"
+      - ".github/upstream-file-map.json"
   workflow_dispatch:
 
 jobs:
+  monitor-validation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Run actionlint
+        run: |
+          bash <(curl -s https://raw.githubusercontent.com/rhysd/actionlint/v1.7.12/scripts/download-actionlint.bash) 1.7.12
+          ./actionlint -color
+
+      - name: Run Python compile check
+        run: python3 -m compileall -q scripts tests
+
+      - name: Run monitor unit tests
+        run: python3 -m unittest discover -s tests -p 'test_upstream_release_monitor.py' -v
+
   lint:
     runs-on: ubuntu-latest
     steps:

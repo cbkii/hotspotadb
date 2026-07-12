@@ -3,10 +3,13 @@
 # Accepted formats (exact-match only):
 #   1) <tag>
 #   2) <owner/repo>@<tag>
+#   3) <base>..<head>
+#   4) <owner/repo>@<base>..<head>
 #
 # Notes:
 # - Blank lines and lines starting with '#' are ignored.
-# - Use tuple format when monitoring multiple upstream repos.
+# - Matching is strict literal. Bare entries (formats 1 and 3) apply ONLY to the default upstream repo (droserasprout/io.drsr.hotspotadb).
+# - Use tuple format (formats 2 and 4) when monitoring overridden upstream repos.
 # - Remove an entry to allow future issue generation for that tag.
 
 # Baseline at standalone cutover:
