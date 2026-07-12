@@ -154,7 +154,10 @@ object FixedEndpointController {
             portRetryCount = 0
             HotspotHelper.setFixedEndpointReady(ctx, false)
             AdbPortProxy.stop(xposedModule)
-            SubnetAlias.remove(loader, xposedModule)
+            val aliasRemoved = SubnetAlias.remove(loader, xposedModule)
+            if (!aliasRemoved) {
+                schedulePortRetry(xposedModule, "alias cleanup failed")
+            }
             return
         }
 
