@@ -166,7 +166,7 @@ jobs:
           echo "Decoded and validated /tmp/release.keystore"
 
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
         with:
           packages: 'build-tools;35.0.0 platforms;android-36 platform-tools cmdline-tools;latest'
 

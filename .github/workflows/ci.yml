@@ -70,7 +70,7 @@ jobs:
           distribution: temurin
           java-version: 21
 
-      - uses: android-actions/setup-android@v3
+      - uses: android-actions/setup-android@v4
         with:
           packages: 'build-tools;35.0.0 platforms;android-36 platform-tools cmdline-tools;latest'
 
@@ -107,7 +107,7 @@ jobs:
           distribution: temurin
           java-version: 21
 
-      - uses: android-actions/setup-android@v3
+      - uses: android-actions/setup-android@v4
         with:
           packages: 'build-tools;35.0.0 platforms;android-36 platform-tools cmdline-tools;latest'
 
