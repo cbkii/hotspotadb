@@ -69,8 +69,8 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
-      - name: Run ktlint and detekt
-        run: ./gradlew --no-daemon ktlintCheck detekt
+      - name: Run Kotlin checks and unit tests
+        run: ./gradlew --no-daemon ktlintCheck detekt testDebugUnitTest
 
   build:
     runs-on: ubuntu-latest
