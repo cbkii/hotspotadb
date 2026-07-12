@@ -13,6 +13,7 @@ import android.provider.Settings
 import android.util.Log
 import io.github.libxposed.api.XposedModule
 import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
 
 /** Coordinates the fixed subnet alias and TLS-preserving port proxy in system_server. */
@@ -45,6 +46,7 @@ object FixedEndpointController {
     @Volatile
     private var lastState: String? = null
 
+    private var pendingEvaluation: ScheduledFuture<*>? = null
     private var portRetryCount = 0
 
     fun configure(
@@ -57,9 +59,10 @@ object FixedEndpointController {
 
     fun onContextAvailable(context: Context) {
         val stableContext = context.applicationContext ?: context
+        val firstContext = this.context == null
         this.context = stableContext
         ensureObservers(stableContext)
-        scheduleEvaluation()
+        scheduleEvaluation(resetRetries = firstContext)
     }
 
     private fun ensureObservers(context: Context) {
@@ -71,7 +74,7 @@ object FixedEndpointController {
                             selfChange: Boolean,
                             uri: Uri?,
                         ) {
-                            scheduleEvaluation()
+                            scheduleEvaluation(resetRetries = true)
                         }
                     }
                 try {
@@ -99,7 +102,7 @@ object FixedEndpointController {
                             receiverContext: Context,
                             intent: Intent,
                         ) {
-                            if (intent.action != null) scheduleEvaluation()
+                            if (intent.action != null) scheduleEvaluation(resetRetries = true)
                         }
                     }
                 try {
@@ -117,22 +120,31 @@ object FixedEndpointController {
         }
     }
 
-    private fun scheduleEvaluation(delayMs: Long = 0L) {
-        executor.schedule(
-            {
-                try {
-                    evaluate()
-                } catch (e: Throwable) {
-                    val ctx = context
-                    module?.log(Log.ERROR, HotspotAdbModule.TAG, "HotspotAdb: fixed endpoint evaluation failed: $e")
-                    if (ctx != null) {
-                        runCatching { HotspotHelper.setFixedEndpointReady(ctx, false) }
-                    }
-                }
-            },
-            delayMs,
-            TimeUnit.MILLISECONDS,
-        )
+    private fun scheduleEvaluation(
+        delayMs: Long = 0L,
+        resetRetries: Boolean = false,
+    ) {
+        synchronized(lock) {
+            pendingEvaluation?.cancel(false)
+            pendingEvaluation =
+                executor.schedule(
+                    {
+                        synchronized(lock) { pendingEvaluation = null }
+                        if (resetRetries) portRetryCount = 0
+                        try {
+                            evaluate()
+                        } catch (e: Throwable) {
+                            val ctx = context
+                            module?.log(Log.ERROR, HotspotAdbModule.TAG, "HotspotAdb: fixed endpoint evaluation failed: $e")
+                            if (ctx != null) {
+                                runCatching { HotspotHelper.setFixedEndpointReady(ctx, false) }
+                            }
+                        }
+                    },
+                    delayMs,
+                    TimeUnit.MILLISECONDS,
+                )
+        }
     }
 
     private fun evaluate() {
@@ -151,11 +163,12 @@ object FixedEndpointController {
         }
 
         if (!hotspot || !enabled || !adbEnabled) {
-            portRetryCount = 0
             HotspotHelper.setFixedEndpointReady(ctx, false)
             AdbPortProxy.stop(xposedModule)
             val aliasRemoved = SubnetAlias.remove(loader, xposedModule)
-            if (!aliasRemoved) {
+            if (aliasRemoved) {
+                portRetryCount = 0
+            } else {
                 schedulePortRetry(xposedModule, "alias cleanup failed")
             }
             return
@@ -169,11 +182,12 @@ object FixedEndpointController {
             return
         }
 
-        portRetryCount = 0
         val aliasReady = SubnetAlias.apply(ctx, loader, xposedModule)
         val proxyReady = aliasReady && AdbPortProxy.start(realPort, xposedModule)
         HotspotHelper.setFixedEndpointReady(ctx, proxyReady)
-        if (!proxyReady) {
+        if (proxyReady) {
+            portRetryCount = 0
+        } else {
             AdbPortProxy.stop(xposedModule)
             SubnetAlias.remove(loader, xposedModule)
             schedulePortRetry(xposedModule, "alias or proxy startup failed")
@@ -199,6 +213,6 @@ object FixedEndpointController {
         if (portRetryCount == 1) {
             xposedModule.log(Log.INFO, HotspotAdbModule.TAG, "HotspotAdb: retrying fixed endpoint: $reason")
         }
-        scheduleEvaluation(PORT_RETRY_DELAY_MS)
+        scheduleEvaluation(delayMs = PORT_RETRY_DELAY_MS)
     }
 }
