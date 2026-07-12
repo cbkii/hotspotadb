@@ -14,3 +14,6 @@
 
 # Baseline at standalone cutover:
 v1.0.0
+
+# Selectively integrated in cbkii/hotspotadb 2.3.0:
+droserasprout/io.drsr.hotspotadb@1.1.0..1.2.0
