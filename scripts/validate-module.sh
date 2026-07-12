@@ -1,10 +1,27 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-grep -R "Settings.Global.putInt" -n app/src/main | grep -v "SettingsHook.kt" | grep -Ev ":[0-9]+:[[:space:]]*(//|\*)" && {
-    echo "Unexpected Settings.Global.putInt usage outside injected toggle" >&2
+# Explicit writes are allowed only in the two user-facing toggle implementations
+# and in HotspotHelper's system_server readiness publication. A broad hook of
+# Settings.Global.putInt remains forbidden because it can block user-requested
+# Wireless Debugging disables.
+UNEXPECTED_PUTINT="$({
+    grep -R "Settings.Global.putInt" -n app/src/main || true
+} | grep -Ev '/(SettingsHook|FixedEndpointSettingsHook|HotspotHelper)\.kt:' | grep -Ev ':[0-9]+:[[:space:]]*(//|\*)' || true)"
+if [[ -n "$UNEXPECTED_PUTINT" ]]; then
+    printf '%s\n' "$UNEXPECTED_PUTINT" >&2
+    echo "Unexpected Settings.Global.putInt usage outside approved explicit state writes" >&2
     exit 1
-} || true
+fi
+
+BROAD_INTERCEPT="$({
+    grep -R -E 'hookSettingsGlobal|Settings\.Global(::class\.java|\.class)|findMethod\([^)]*putInt' -n app/src/main || true
+} | grep -Ev ':[0-9]+:[[:space:]]*(//|\*)' || true)"
+if [[ -n "$BROAD_INTERCEPT" ]]; then
+    printf '%s\n' "$BROAD_INTERCEPT" >&2
+    echo "Broad Settings.Global.putInt interception is forbidden" >&2
+    exit 1
+fi
 
 shopt -s nullglob
 APK_LIST=(app/build/outputs/apk/debug/*.apk)
