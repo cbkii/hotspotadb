@@ -98,21 +98,17 @@ This standalone repo does not rely on GitHub fork-network status for sync awaren
 
 How suppression works:
 
-- tags or ranges listed in `.github/upstream-release-resolved-tags.txt` are skipped immediately
-- unchanged reruns are deduplicated via a deterministic tracking marker in the issue body
-- closed tracking issues are treated as resolved and will not be reopened
-- an empty release diff, or a release where all changed files are already identically integrated into the local repository, is skipped automatically
-- `--force` bypasses duplicate, resolved, and integrated suppression to enforce issue recreation or update
+- tags listed in `.github/upstream-release-resolved-tags.txt` are skipped
+- closed issues for the same upstream tag are treated as resolved
+- unchanged reruns are deduplicated via a fingerprint marker
+- already-integrated/trivial diffs are suppressed unless force mode is used
 
 Manual run options (Actions > Upstream Release Monitor):
 
-- `upstream_repo`: override monitored upstream (default: `droserasprout/io.drsr.hotspotadb`)
-- `upstream_tag`: replay a specific tag as the target release
-- `upstream_base_tag`: supply a specific base tag for release-to-release diffs
-- `include_prerelease`: include prereleases in automatic latest-release selection
+- `upstream_repo`: override monitored upstream
+- `upstream_tag`: replay a specific tag
+- `include_prerelease`: include prereleases in auto-selection
 - `force`: bypass suppression heuristics for operator verification
-
-The monitor executes defensively and produces a full `metadata.json` state, `upstream-monitor-report.md`, `upstream-release.diff`, and localized file diffs as workflow artifacts on every run.
 
 ## Build from source
 

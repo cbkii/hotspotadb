@@ -16,9 +16,3 @@
 *.patch
 ktlint
 .kotlin
-__pycache__/
-*.py[cod]
-
-/artifacts/
-/artifacts-*/
-/upstream-monitor-artifacts/

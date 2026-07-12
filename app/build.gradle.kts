@@ -20,8 +20,8 @@ android {
         // minSdk stays at 35 (Android 15): the module targets Android 15+ only
         minSdk = 35
         targetSdk = 36
-        versionCode = 12
-        versionName = "2.2.3"
+        versionCode = 11
+        versionName = "2.2.2"
     }
 
     signingConfigs {
@@ -66,4 +66,5 @@ dependencies {
     testImplementation("io.github.libxposed:api:101.0.1")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.mockito.kotlin:mockito-kotlin:5.2.1")
+    testImplementation("org.mockito:mockito-core:5.10.0")
 }

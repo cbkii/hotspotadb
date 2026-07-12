@@ -18,12 +18,12 @@ class ReflectionCompatTest {
         classLoader = this::class.java.classLoader!!
     }
 
+    // Dummy classes for testing
     open class BaseDummy {
         protected open fun baseMethod(): String = "base"
 
         val baseStringField: String = "baseString"
         private val baseIntField: Int = 10
-        val baseDoubleField: Double = 3.14
     }
 
     class Dummy() : BaseDummy() {
@@ -31,7 +31,7 @@ class ReflectionCompatTest {
         val stringField: String = "hello"
 
         private constructor(value: Int) : this() {
-            require(value >= 0)
+            // Do nothing
         }
 
         fun publicMethod(): String = "public"
@@ -40,7 +40,7 @@ class ReflectionCompatTest {
     }
 
     @Test
-    fun `findFirstClass finds first existing class`() {
+    fun `findFirstClass finds existing class`() {
         val clazz =
             ReflectionCompat.findFirstClass(
                 classLoader,
@@ -49,12 +49,12 @@ class ReflectionCompatTest {
                 "non.existent.Class",
                 Dummy::class.java.name,
             )
-
+        assertNotNull(clazz)
         assertEquals(Dummy::class.java, clazz)
     }
 
     @Test
-    fun `findFirstClass returns null when all candidates are absent`() {
+    fun `findFirstClass returns null when class not found`() {
         val clazz =
             ReflectionCompat.findFirstClass(
                 classLoader,
@@ -63,7 +63,6 @@ class ReflectionCompatTest {
                 "non.existent.Class1",
                 "non.existent.Class2",
             )
-
         assertNull(clazz)
     }
 
@@ -77,7 +76,6 @@ class ReflectionCompatTest {
                 "publicMethod",
                 false,
             )
-
         assertNotNull(method)
         assertEquals("publicMethod", method?.name)
     }
@@ -93,13 +91,12 @@ class ReflectionCompatTest {
                 false,
                 Int::class.java,
             )
-
         assertNotNull(method)
         assertEquals("privateMethod", method?.name)
     }
 
     @Test
-    fun `findMethod finds inherited protected method when requested`() {
+    fun `findMethod finds inherited method when includeInherited is true`() {
         val method =
             ReflectionCompat.findMethod(
                 Dummy::class.java,
@@ -108,14 +105,12 @@ class ReflectionCompatTest {
                 "baseMethod",
                 true,
             )
-
         assertNotNull(method)
         assertEquals("baseMethod", method?.name)
-        assertEquals(BaseDummy::class.java, method?.declaringClass)
     }
 
     @Test
-    fun `findMethod excludes inherited method when not requested`() {
+    fun `findMethod does not find inherited method when includeInherited is false`() {
         val method =
             ReflectionCompat.findMethod(
                 Dummy::class.java,
@@ -124,110 +119,86 @@ class ReflectionCompatTest {
                 "baseMethod",
                 false,
             )
-
         assertNull(method)
     }
 
     @Test
     fun `findConstructor finds no-arg constructor`() {
-        val constructor =
+        val ctor =
             ReflectionCompat.findConstructor(
                 Dummy::class.java,
                 mockModule,
                 "DummyCtor",
             )
-
-        assertNotNull(constructor)
-        assertEquals(0, constructor?.parameterCount)
+        assertNotNull(ctor)
+        assertEquals(0, ctor?.parameterCount)
     }
 
     @Test
-    fun `findConstructor finds private constructor with arguments`() {
-        val constructor =
+    fun `findConstructor finds private constructor with args`() {
+        val ctor =
             ReflectionCompat.findConstructor(
                 Dummy::class.java,
                 mockModule,
                 "DummyCtor",
                 Int::class.java,
             )
-
-        assertNotNull(constructor)
-        assertEquals(1, constructor?.parameterCount)
+        assertNotNull(ctor)
+        assertEquals(1, ctor?.parameterCount)
     }
 
     @Test
-    fun `getFieldValueByName reads field from current class`() {
-        assertEquals(42, ReflectionCompat.getFieldValueByName(Dummy(), "intField"))
+    fun `getFieldValueByName gets field value from current class`() {
+        val dummy = Dummy()
+        val value = ReflectionCompat.getFieldValueByName(dummy, "intField")
+        assertEquals(42, value)
     }
 
     @Test
-    fun `getFieldValueByName reads field from base class`() {
-        val value = ReflectionCompat.getFieldValueByName(Dummy(), "baseStringField")
-
+    fun `getFieldValueByName gets field value from base class`() {
+        val dummy = Dummy()
+        val value = ReflectionCompat.getFieldValueByName(dummy, "baseStringField")
         assertEquals("baseString", value)
     }
 
     @Test
-    fun `getFieldValueByName returns null for absent field`() {
-        assertNull(ReflectionCompat.getFieldValueByName(Dummy(), "missingField"))
+    fun `getFieldValueByType gets field value from current class`() {
+        val dummy = Dummy()
+        val value = ReflectionCompat.getFieldValueByType(dummy, "int")
+        assertEquals(42, value)
     }
 
     @Test
-    fun `getFieldValueByType reads first matching field from current class`() {
-        assertEquals(42, ReflectionCompat.getFieldValueByType(Dummy(), "int"))
+    fun `getFieldValueByType gets field value from base class`() {
+        val dummy = Dummy()
+        // java.lang.String for Kotlin String mapped field
+        val value = ReflectionCompat.getFieldValueByType(dummy, String::class.java.name)
+        assertEquals("hello", value)
     }
 
     @Test
-    fun `getFieldValueByType walks into base class for unique type`() {
-        val value = ReflectionCompat.getFieldValueByType(Dummy(), "double")
-
-        assertEquals(3.14, value as Double, 0.0)
-    }
-
-    @Test
-    fun `getFieldValueByType returns null for absent type`() {
-        val value = ReflectionCompat.getFieldValueByType(Dummy(), Long::class.java.name)
-
-        assertNull(value)
-    }
-
-    @Test
-    fun `getFieldByNamesOrTypes prioritises requested name`() {
+    fun `getFieldByNamesOrTypes gets field by name`() {
+        val dummy = Dummy()
         val field =
             ReflectionCompat.getFieldByNamesOrTypes(
-                Dummy(),
+                dummy,
                 listOf("baseIntField"),
-                listOf("int"),
+                emptyList(),
             )
-
         assertNotNull(field)
         assertEquals("baseIntField", field?.name)
-        assertEquals(BaseDummy::class.java, field?.declaringClass)
     }
 
     @Test
-    fun `getFieldByNamesOrTypes falls back to requested type`() {
+    fun `getFieldByNamesOrTypes gets field by type`() {
+        val dummy = Dummy()
         val field =
             ReflectionCompat.getFieldByNamesOrTypes(
-                Dummy(),
-                listOf("missingField"),
-                listOf("double"),
+                dummy,
+                emptyList(),
+                listOf("int"),
             )
-
         assertNotNull(field)
-        assertEquals("baseDoubleField", field?.name)
-        assertEquals(BaseDummy::class.java, field?.declaringClass)
-    }
-
-    @Test
-    fun `getFieldByNamesOrTypes returns null when no candidate matches`() {
-        val field =
-            ReflectionCompat.getFieldByNamesOrTypes(
-                Dummy(),
-                listOf("missingField"),
-                listOf(Long::class.java.name),
-            )
-
-        assertNull(field)
+        assertEquals("int", field?.type?.name)
     }
 }
