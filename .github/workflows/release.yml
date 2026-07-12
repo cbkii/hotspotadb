@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Git tag / GitHub Release tag to create. Leave blank to use versionName from app/build.gradle.kts."
+        description: "Exact Git tag / GitHub Release tag. Leave blank to use versionName from app/build.gradle.kts."
         required: false
         default: ""
       name:
@@ -22,92 +22,126 @@ on:
         type: boolean
         default: false
 
+run-name: "Release APK: ${{ inputs.tag || 'versionName' }}"
+
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ github.repository }}
   cancel-in-progress: false
 
 jobs:
   release:
     name: Build and publish signed APK
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: write
 
     steps:
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           fetch-depth: 0
+          persist-credentials: false
 
-      - name: Resolve release metadata
+      - name: Resolve and validate release metadata
         id: meta
         shell: bash
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+          INPUT_NAME: ${{ inputs.name }}
         run: |
           set -euo pipefail
 
-          VERSION_NAME="$(sed -n 's/^[[:space:]]*versionName[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' app/build.gradle.kts | head -n 1)"
-          VERSION_CODE="$(sed -n 's/^[[:space:]]*versionCode[[:space:]]*=[[:space:]]*\([0-9][0-9]*\).*/\1/p' app/build.gradle.kts | head -n 1)"
+          VERSION_NAME="$(
+            sed -n \
+              's/^[[:space:]]*versionName[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' \
+              app/build.gradle.kts |
+              head -n 1
+          )"
+          VERSION_CODE="$(
+            sed -n \
+              's/^[[:space:]]*versionCode[[:space:]]*=[[:space:]]*\([0-9][0-9]*\).*/\1/p' \
+              app/build.gradle.kts |
+              head -n 1
+          )"
 
-          [ -n "$VERSION_NAME" ] || { echo "::error::Could not parse versionName from app/build.gradle.kts"; exit 1; }
-          [ -n "$VERSION_CODE" ] || { echo "::error::Could not parse versionCode from app/build.gradle.kts"; exit 1; }
-
-          # ${{ inputs.tag || '' }} uses the GHA expression || operator so that a
-          # null or absent input becomes an empty string in the rendered script,
-          # without needing an env var.
-          # sanitize_tag allowlists characters valid in git tag names and filenames.
-          sanitize_tag() { printf '%s' "$1" | tr -cd 'a-zA-Z0-9._+-'; }
-          # sanitize_name strips newlines/CRs and non-printable control characters
-          # to protect GITHUB_OUTPUT while preserving human-readable display text.
-          sanitize_name() { printf '%s' "$1" | tr -d '\n\r' | tr -cd '[:print:]'; }
-
-          SAFE_TAG="$(sanitize_tag "${{ inputs.tag || '' }}")"
-          SAFE_NAME="$(sanitize_name "${{ inputs.name || '' }}")"
-
-          TAG="${SAFE_TAG:-$VERSION_NAME}"
-
-          # Auto-bump the patch component whenever the resolved tag already exists.
-          # Keeps incrementing until a free slot is found so the workflow never
-          # fails simply because the tag was already used.
-          bump_patch() {
-            local tag="$1" prefix="" ver
-            [[ "$tag" == v* ]] && prefix="v" && ver="${tag#v}" || ver="$tag"
-            if [[ "$ver" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+) ]]; then
-              echo "${prefix}${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.$((BASH_REMATCH[3]+1))"
-            else
-              echo "${tag}.1"
-            fi
+          [[ -n "$VERSION_NAME" ]] || {
+            echo "::error::Could not parse versionName from app/build.gradle.kts"
+            exit 1
+          }
+          [[ -n "$VERSION_CODE" ]] || {
+            echo "::error::Could not parse versionCode from app/build.gradle.kts"
+            exit 1
           }
 
-          while git rev-parse -q --verify "refs/tags/$TAG" > /dev/null 2>&1; do
-            BUMPED="$(bump_patch "$TAG")"
-            echo "Tag $TAG already exists, auto-bumping to $BUMPED"
-            TAG="$BUMPED"
-          done
+          TAG="${INPUT_TAG:-$VERSION_NAME}"
+          RELEASE_NAME="${INPUT_NAME:-$TAG}"
 
-          RELEASE_NAME="${SAFE_NAME:-$TAG}"
-          APK_BASENAME="hotspotadb-${TAG}.apk"
+          [[ ${#TAG} -le 128 ]] || {
+            echo "::error::Release tag exceeds 128 characters"
+            exit 1
+          }
+          [[ ${#RELEASE_NAME} -le 256 ]] || {
+            echo "::error::Release title exceeds 256 characters"
+            exit 1
+          }
+
+          if LC_ALL=C printf '%s' "$RELEASE_NAME" | grep -q '[[:cntrl:]]'; then
+            echo "::error::Release title must not contain control characters or newlines"
+            exit 1
+          fi
+
+          git check-ref-format "refs/tags/$TAG" >/dev/null || {
+            echo "::error::Invalid Git tag: $TAG"
+            exit 1
+          }
+
+          git fetch --force --tags origin
+
+          EXISTING_SHA="$(
+            git rev-parse -q --verify "refs/tags/${TAG}^{commit}" 2>/dev/null || true
+          )"
+          if [[ -n "$EXISTING_SHA" && "$EXISTING_SHA" != "$GITHUB_SHA" ]]; then
+            echo "::error::Tag $TAG already points to $EXISTING_SHA, not $GITHUB_SHA"
+            exit 1
+          fi
+
+          if [[ -n "$EXISTING_SHA" ]]; then
+            TAG_EXISTS=true
+            echo "Tag $TAG already points to the selected release commit; rerun is idempotent."
+          else
+            TAG_EXISTS=false
+          fi
+
+          SAFE_TAG="$(
+            LC_ALL=C printf '%s' "$TAG" |
+              sed 's/[^A-Za-z0-9._+-]/-/g'
+          )"
+          TAG_HASH="$(printf '%s' "$TAG" | sha256sum | cut -c1-12)"
+          if [[ -z "$SAFE_TAG" ]]; then
+            SAFE_TAG="tag-$TAG_HASH"
+          elif [[ "$SAFE_TAG" != "$TAG" ]]; then
+            SAFE_TAG="${SAFE_TAG}-${TAG_HASH}"
+          fi
+
+          APK_BASENAME="hotspotadb-${SAFE_TAG}.apk"
           SHA256_NAME="${APK_BASENAME}.sha256"
 
-          # Fetch the most recent published (non-draft) release tag to build the
-          # compare link in the release description.
-          PREV_TAG="$(gh release list --repo "$GITHUB_REPOSITORY" --limit 1 \
-            --json tagName --jq '.[0].tagName // ""' 2>/dev/null || echo "")"
-
           {
-            echo "version_name=$VERSION_NAME"
-            echo "version_code=$VERSION_CODE"
-            echo "tag=$TAG"
-            echo "release_name=$RELEASE_NAME"
-            echo "apk_basename=$APK_BASENAME"
-            echo "sha256_name=$SHA256_NAME"
-            echo "prev_tag=$PREV_TAG"
+            printf 'version_name=%s\n' "$VERSION_NAME"
+            printf 'version_code=%s\n' "$VERSION_CODE"
+            printf 'tag=%s\n' "$TAG"
+            printf 'release_name=%s\n' "$RELEASE_NAME"
+            printf 'safe_tag=%s\n' "$SAFE_TAG"
+            printf 'tag_exists=%s\n' "$TAG_EXISTS"
+            printf 'apk_basename=%s\n' "$APK_BASENAME"
+            printf 'sha256_name=%s\n' "$SHA256_NAME"
           } >> "$GITHUB_OUTPUT"
 
-          echo "Resolved versionName: $VERSION_NAME"
-          echo "Resolved versionCode: $VERSION_CODE"
-          echo "Release tag: $TAG"
-          echo "Release title: $RELEASE_NAME"
-          echo "Previous release tag: ${PREV_TAG:-<none>}"
+          printf 'Resolved versionName: %s\n' "$VERSION_NAME"
+          printf 'Resolved versionCode: %s\n' "$VERSION_CODE"
+          printf 'Release tag: %s\n' "$TAG"
+          printf 'Release title: %s\n' "$RELEASE_NAME"
 
       - name: Validate signing secrets
         shell: bash
@@ -120,26 +154,26 @@ jobs:
           set -euo pipefail
 
           MISSING=()
-          [ -n "$KEYSTORE_BASE64" ] || MISSING+=(KEYSTORE_BASE64)
-          [ -n "$KEYSTORE_PASSWORD" ] || MISSING+=(KEYSTORE_PASSWORD)
-          [ -n "$KEY_ALIAS" ] || MISSING+=(KEY_ALIAS)
-          [ -n "$KEY_PASSWORD" ] || MISSING+=(KEY_PASSWORD)
+          [[ -n "$KEYSTORE_BASE64" ]] || MISSING+=(KEYSTORE_BASE64)
+          [[ -n "$KEYSTORE_PASSWORD" ]] || MISSING+=(KEYSTORE_PASSWORD)
+          [[ -n "$KEY_ALIAS" ]] || MISSING+=(KEY_ALIAS)
+          [[ -n "$KEY_PASSWORD" ]] || MISSING+=(KEY_PASSWORD)
 
-          if [ "${#MISSING[@]}" -gt 0 ]; then
+          if (( ${#MISSING[@]} > 0 )); then
             printf '::error::Missing required repository secrets: %s\n' "${MISSING[*]}"
-            echo "::error::Set them in Settings -> Secrets and variables -> Actions."
+            echo "::error::Configure them under Settings -> Secrets and variables -> Actions."
             exit 1
           fi
 
-          if ! printf '%s' "$KEYSTORE_BASE64" | tr -d '[:space:]' | base64 --decode > /dev/null 2>&1; then
-            echo "::error::KEYSTORE_BASE64 is not valid base64. Regenerate with: base64 -w 0 release.keystore"
+          if ! printf '%s' "$KEYSTORE_BASE64" |
+            tr -d '[:space:]' |
+            base64 --decode >/dev/null 2>&1; then
+            echo "::error::KEYSTORE_BASE64 is not valid base64"
             exit 1
           fi
-
-          echo "Signing secrets are present and KEYSTORE_BASE64 is decodable."
 
       - name: Set up Java
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@0f481fcb613427c0f801b606911222b5b6f3083a # v5
         with:
           distribution: temurin
           java-version: "21"
@@ -154,29 +188,32 @@ jobs:
           set -euo pipefail
           umask 077
 
-          printf '%s' "$KEYSTORE_BASE64" | tr -d '[:space:]' | base64 --decode > /tmp/release.keystore
-          chmod 600 /tmp/release.keystore
+          KEYSTORE_PATH="${RUNNER_TEMP}/hotspotadb-release.keystore"
+          printf '%s' "$KEYSTORE_BASE64" |
+            tr -d '[:space:]' |
+            base64 --decode > "$KEYSTORE_PATH"
+          chmod 600 "$KEYSTORE_PATH"
 
           keytool -list \
-            -keystore /tmp/release.keystore \
+            -keystore "$KEYSTORE_PATH" \
             -storepass "$KEYSTORE_PASSWORD" \
             -alias "$KEY_ALIAS" \
-            -noprompt > /dev/null
+            -noprompt >/dev/null
 
-          echo "Decoded and validated /tmp/release.keystore"
+          printf 'keystore_path=%s\n' "$KEYSTORE_PATH" >> "$GITHUB_ENV"
 
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
         with:
-          packages: 'build-tools;35.0.0 platforms;android-36 platform-tools cmdline-tools;latest'
+          packages: "build-tools;35.0.0 platforms;android-36 platform-tools cmdline-tools;latest"
 
       - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
+        uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
 
       - name: Build signed release APK
         shell: bash
         env:
-          KEYSTORE_PATH: /tmp/release.keystore
+          KEYSTORE_PATH: ${{ env.keystore_path }}
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
@@ -184,152 +221,128 @@ jobs:
           set -euo pipefail
           ./gradlew --no-daemon clean assembleRelease
 
-      - name: Inspect and validate built APK
+      - name: Inspect, validate and package APK
         id: apk
         shell: bash
+        env:
+          APK_BASENAME: ${{ steps.meta.outputs.apk_basename }}
+          SHA256_NAME: ${{ steps.meta.outputs.sha256_name }}
         run: |
           set -euo pipefail
 
-          APK_PATH="$(find app/build/outputs/apk/release -maxdepth 1 -type f -name '*.apk' | sort | head -n 1)"
-          [ -n "$APK_PATH" ] || { echo "::error::No release APK found under app/build/outputs/apk/release"; exit 1; }
+          mapfile -d '' -t APKS < <(
+            find app/build/outputs/apk/release \
+              -maxdepth 1 \
+              -type f \
+              -name '*.apk' \
+              -print0 |
+              sort -z
+          )
 
-          echo "Built APK: $APK_PATH"
+          if (( ${#APKS[@]} != 1 )); then
+            printf '::error::Expected exactly one release APK, found %d\n' "${#APKS[@]}"
+            printf 'Candidate: %s\n' "${APKS[@]:-<none>}"
+            exit 1
+          fi
+          APK_PATH="${APKS[0]}"
 
-          if unzip -p "$APK_PATH" META-INF/xposed/module.prop > /dev/null 2>&1; then
-            echo "Detected modern libxposed packaging"
-            for f in META-INF/xposed/java_init.list META-INF/xposed/scope.list META-INF/xposed/module.prop; do
-              unzip -p "$APK_PATH" "$f" > /dev/null 2>&1 || {
-                echo "::error::Missing packaged module file: $f"
+          if unzip -p "$APK_PATH" META-INF/xposed/module.prop >/dev/null 2>&1; then
+            for FILE in \
+              META-INF/xposed/java_init.list \
+              META-INF/xposed/scope.list \
+              META-INF/xposed/module.prop; do
+              unzip -p "$APK_PATH" "$FILE" >/dev/null 2>&1 || {
+                echo "::error::Missing packaged module file: $FILE"
                 exit 1
               }
             done
-            unzip -p "$APK_PATH" META-INF/xposed/java_init.list | grep -qx 'io.drsr.hotspotadb.HotspotAdbModule' || {
-              echo "::error::java_init.list does not contain io.drsr.hotspotadb.HotspotAdbModule"
+
+            unzip -p "$APK_PATH" META-INF/xposed/java_init.list |
+              grep -qx 'io.drsr.hotspotadb.HotspotAdbModule' || {
+              echo "::error::Unexpected libxposed entry point"
               exit 1
             }
-            for scope in com.android.settings android; do
-              unzip -p "$APK_PATH" META-INF/xposed/scope.list | grep -qx "$scope" || {
-                echo "::error::scope.list missing scope: $scope"
+
+            for SCOPE in com.android.settings android; do
+              unzip -p "$APK_PATH" META-INF/xposed/scope.list |
+                grep -qx "$SCOPE" || {
+                echo "::error::scope.list missing scope: $SCOPE"
                 exit 1
               }
             done
-            for prop in 'minApiVersion=101' 'targetApiVersion=101' 'staticScope=true'; do
-              unzip -p "$APK_PATH" META-INF/xposed/module.prop | grep -qx "$prop" || {
-                echo "::error::module.prop missing: $prop"
+
+            for PROPERTY in \
+              'minApiVersion=101' \
+              'targetApiVersion=101' \
+              'staticScope=true'; do
+              unzip -p "$APK_PATH" META-INF/xposed/module.prop |
+                grep -qx "$PROPERTY" || {
+                echo "::error::module.prop missing: $PROPERTY"
                 exit 1
               }
             done
-          elif unzip -p "$APK_PATH" assets/xposed_init > /dev/null 2>&1; then
-            echo "Detected legacy Xposed packaging"
-            unzip -p "$APK_PATH" assets/xposed_init | grep -qx 'io.drsr.hotspotadb.HotspotAdbModule' || {
-              echo "::error::assets/xposed_init does not contain io.drsr.hotspotadb.HotspotAdbModule"
+          elif unzip -p "$APK_PATH" assets/xposed_init >/dev/null 2>&1; then
+            unzip -p "$APK_PATH" assets/xposed_init |
+              grep -qx 'io.drsr.hotspotadb.HotspotAdbModule' || {
+              echo "::error::Unexpected legacy Xposed entry point"
               exit 1
             }
           else
-            echo "::error::APK contains neither modern libxposed metadata nor legacy xposed_init"
+            echo "::error::APK contains neither libxposed metadata nor assets/xposed_init"
             exit 1
           fi
 
-          cp "$APK_PATH" "${{ steps.meta.outputs.apk_basename }}"
-          sha256sum "${{ steps.meta.outputs.apk_basename }}" > "${{ steps.meta.outputs.sha256_name }}"
+          RELEASE_DIR="${RUNNER_TEMP}/hotspotadb-release-artifacts"
+          rm -rf "$RELEASE_DIR"
+          mkdir -p "$RELEASE_DIR"
+          cp -- "$APK_PATH" "${RELEASE_DIR}/${APK_BASENAME}"
+          (
+            cd "$RELEASE_DIR"
+            sha256sum "$APK_BASENAME" > "$SHA256_NAME"
+          )
 
-          {
-            echo "apk_path=$APK_PATH"
-            echo "release_apk=${{ steps.meta.outputs.apk_basename }}"
-            echo "release_sha256=${{ steps.meta.outputs.sha256_name }}"
-          } >> "$GITHUB_OUTPUT"
+          printf 'release_apk=%s\n' "${RELEASE_DIR}/${APK_BASENAME}" >> "$GITHUB_OUTPUT"
+          printf 'release_sha256=%s\n' "${RELEASE_DIR}/${SHA256_NAME}" >> "$GITHUB_OUTPUT"
 
-      - name: Generate release notes
-        id: notes
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          TAG='${{ steps.meta.outputs.tag }}'
-          PREV_TAG='${{ steps.meta.outputs.prev_tag }}'
-          REPO_URL='${{ github.server_url }}/${{ github.repository }}'
-          NOTES_FILE=/tmp/release-notes.md
-
-          if [ -n "$PREV_TAG" ]; then
-            printf '**Full Changelog**: %s/compare/%s...%s\n' \
-              "$REPO_URL" "$PREV_TAG" "$TAG" > "$NOTES_FILE"
-          else
-            printf 'Initial release.\n' > "$NOTES_FILE"
-          fi
-
-          echo "notes_file=$NOTES_FILE" >> "$GITHUB_OUTPUT"
-
-      - name: Upload release artifacts to workflow run
-        uses: actions/upload-artifact@v4
+      - name: Upload signed artifacts to workflow run
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: release-apk-${{ steps.meta.outputs.tag }}
+          name: release-apk-${{ steps.meta.outputs.safe_tag }}
           path: |
             ${{ steps.apk.outputs.release_apk }}
             ${{ steps.apk.outputs.release_sha256 }}
           if-no-files-found: error
+          retention-days: 14
 
-      - name: Create or update git tag
+      - name: Create release tag
+        if: steps.meta.outputs.tag_exists != 'true'
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.meta.outputs.tag }}
         run: |
           set -euo pipefail
-          TAG='${{ steps.meta.outputs.tag }}'
-
-          if git rev-parse -q --verify "refs/tags/$TAG" > /dev/null; then
-            existing_tag_sha="$(git rev-list -n1 "refs/tags/$TAG")"
-            if [ "$existing_tag_sha" = "$GITHUB_SHA" ]; then
-              echo "Tag $TAG already exists and points at the current commit ($GITHUB_SHA); leaving it unchanged."
-            else
-              echo "::error::Tag $TAG already exists but points at commit $existing_tag_sha, not the current commit $GITHUB_SHA"
-              exit 1
-            fi
-          else
-            git tag "$TAG" "$GITHUB_SHA"
-            git push origin "refs/tags/$TAG"
-            echo "Created and pushed tag $TAG"
-          fi
+          gh api \
+            --method POST \
+            "repos/${GITHUB_REPOSITORY}/git/refs" \
+            -f "ref=refs/tags/${RELEASE_TAG}" \
+            -f "sha=${GITHUB_SHA}"
+          echo "Created tag $RELEASE_TAG at $GITHUB_SHA"
 
       - name: Publish GitHub release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           tag_name: ${{ steps.meta.outputs.tag }}
           name: ${{ steps.meta.outputs.release_name }}
-          body_path: ${{ steps.notes.outputs.notes_file }}
           files: |
             ${{ steps.apk.outputs.release_apk }}
             ${{ steps.apk.outputs.release_sha256 }}
           draft: ${{ inputs.draft }}
           prerelease: ${{ inputs.prerelease }}
+          generate_release_notes: true
           fail_on_unmatched_files: true
 
-      - name: Sync versionName and versionCode back to codebase
+      - name: Remove decoded keystore
+        if: always()
         shell: bash
-        run: |
-          set -euo pipefail
-
-          TAG='${{ steps.meta.outputs.tag }}'
-
-          # Strip leading 'v' so versionName matches the bare semver string
-          # (e.g. tag "v2.1.3" → versionName "2.1.3"; tag "2.1.3" stays "2.1.3").
-          VERSION_STRING="${TAG#v}"
-
-          # Read the current versionCode and increment it for the next release.
-          CURRENT_CODE="$(sed -n 's/^[[:space:]]*versionCode[[:space:]]*=[[:space:]]*\([0-9][0-9]*\).*/\1/p' app/build.gradle.kts | head -n 1)"
-          NEW_CODE="$((CURRENT_CODE + 1))"
-
-          # Update versionName in-place.
-          sed -i "s/^\([[:space:]]*versionName[[:space:]]*=[[:space:]]*\)\"[^\"]*\"/\1\"${VERSION_STRING}\"/" app/build.gradle.kts
-
-          # Update versionCode in-place.
-          sed -i "s/^\([[:space:]]*versionCode[[:space:]]*=[[:space:]]*\)[0-9][0-9]*/\1${NEW_CODE}/" app/build.gradle.kts
-
-          echo "Updated versionName to: $VERSION_STRING"
-          echo "Updated versionCode to: $NEW_CODE"
-
-          git config user.name  "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-          git add app/build.gradle.kts
-          git commit -m "chore: bump versionName to ${TAG} and versionCode to ${NEW_CODE} after release [skip ci]"
-          git push origin "HEAD:${{ github.ref_name }}"
-
-          echo "Pushed version bump commit to ${{ github.ref_name }}"
+        run: rm -f -- "${RUNNER_TEMP}/hotspotadb-release.keystore"
