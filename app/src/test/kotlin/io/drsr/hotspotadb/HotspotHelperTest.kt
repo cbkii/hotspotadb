@@ -17,8 +17,22 @@ class HotspotHelperTest {
     }
 
     @Test
-    fun `cellular tunnel and virtual interfaces are rejected`() {
-        listOf("lo", "rmnet_data0", "ccmni0", "tun0", "tap0", "wg0", "v4-wlan0", "dummy0", "ip6tnl0")
-            .forEach { name -> assertNull(name, HotspotHelper.scoreInterfaceName(name)) }
+    fun `cellular tunnel and non-SoftAP wireless interfaces are rejected`() {
+        listOf(
+            "lo",
+            "rmnet_data0",
+            "ccmni0",
+            "tun0",
+            "tap0",
+            "wg0",
+            "v4-wlan0",
+            "dummy0",
+            "ip6tnl0",
+            "p2p0",
+            "aware0",
+            "nan0",
+            "bnep0",
+            "bt-pan",
+        ).forEach { name -> assertNull(name, HotspotHelper.scoreInterfaceName(name)) }
     }
 }
