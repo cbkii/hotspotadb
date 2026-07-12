@@ -8,8 +8,8 @@ object HotspotApi {
     const val WIFI_AP_STATE_ENABLED = 13
     private const val DEFAULT_SSID = "HotspotAP"
 
-    fun getApState(context: Context): Int? =
-        try {
+    fun getApState(context: Context): Int? {
+        return try {
             val wifiManager = context.getSystemService(Context.WIFI_SERVICE) as? WifiManager ?: return null
             wifiManager.javaClass.getMethod("getWifiApState").invoke(wifiManager) as? Int
         } catch (_: ReflectiveOperationException) {
@@ -17,6 +17,7 @@ object HotspotApi {
         } catch (_: SecurityException) {
             null
         }
+    }
 
     fun isApEnabled(context: Context): Boolean = getApState(context) == WIFI_AP_STATE_ENABLED
 
@@ -53,8 +54,8 @@ object HotspotApi {
             ?.takeIf { it.isNotBlank() }
 
     @Suppress("DEPRECATION")
-    fun getStationWifiIp(context: Context): String? =
-        try {
+    fun getStationWifiIp(context: Context): String? {
+        return try {
             val wifiManager = context.getSystemService(Context.WIFI_SERVICE) as? WifiManager ?: return null
             val ip = wifiManager.connectionInfo.ipAddress
             if (ip == 0) return null
@@ -62,4 +63,5 @@ object HotspotApi {
         } catch (_: RuntimeException) {
             null
         }
+    }
 }
