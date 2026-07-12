@@ -291,7 +291,7 @@ object SettingsHook {
         callMethod(pref, "setKey", "hotspot_adb_wireless_debugging")
         callMethod(pref, "setTitle", "Wireless debugging" as CharSequence)
         // Show the EFFECTIVE state: wireless debugging is usable only when both ADB wifi and
-        // hotspot are active.  Mirrors upstream's updatePrefState fix (commit 5b6437a).
+        // hotspot are active.  Mirrors upstream's updatePrefState logic (commit 5b6437a).
         val enabled = isAdbWifiEnabled(context) && HotspotHelper.isHotspotActive(context)
         callMethod(pref, "setChecked", enabled)
         callMethod(pref, "setSummary", getWirelessDebuggingSummary(context, enabled) as CharSequence)
