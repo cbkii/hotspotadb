@@ -26,7 +26,7 @@ class ReflectionCompatTest {
         val baseDoubleField: Double = 3.14
     }
 
-    class Dummy : BaseDummy() {
+    class Dummy() : BaseDummy() {
         private val intField: Int = 42
         val stringField: String = "hello"
 
@@ -162,7 +162,9 @@ class ReflectionCompatTest {
 
     @Test
     fun `getFieldValueByName reads field from base class`() {
-        assertEquals("baseString", ReflectionCompat.getFieldValueByName(Dummy(), "baseStringField"))
+        val value = ReflectionCompat.getFieldValueByName(Dummy(), "baseStringField")
+
+        assertEquals("baseString", value)
     }
 
     @Test
@@ -184,7 +186,9 @@ class ReflectionCompatTest {
 
     @Test
     fun `getFieldValueByType returns null for absent type`() {
-        assertNull(ReflectionCompat.getFieldValueByType(Dummy(), Long::class.java.name))
+        val value = ReflectionCompat.getFieldValueByType(Dummy(), Long::class.java.name)
+
+        assertNull(value)
     }
 
     @Test
