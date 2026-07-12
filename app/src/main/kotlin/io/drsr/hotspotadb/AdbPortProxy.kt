@@ -120,7 +120,7 @@ object AdbPortProxy {
             }
             executor.execute {
                 try {
-                    handle(client, realPort, module)
+                    handle(server, client, realPort, module)
                 } finally {
                     clientPermits.release()
                 }
@@ -129,13 +129,14 @@ object AdbPortProxy {
     }
 
     private fun handle(
+        expectedServer: ServerSocket,
         client: Socket,
         realPort: Int,
         module: XposedModule,
     ) {
         var upstream: Socket? = null
         synchronized(lock) {
-            if (serverSocket == null || upstreamPort != realPort) {
+            if (serverSocket !== expectedServer || upstreamPort != realPort) {
                 closeQuietly(client)
                 return
             }
@@ -153,7 +154,7 @@ object AdbPortProxy {
             connectedUpstream.tcpNoDelay = true
 
             synchronized(lock) {
-                if (serverSocket == null || upstreamPort != realPort) {
+                if (serverSocket !== expectedServer || upstreamPort != realPort) {
                     closeQuietly(client)
                     closeQuietly(connectedUpstream)
                     return
