@@ -26,6 +26,7 @@ class HotspotAdbModule : XposedModule() {
             FixedEndpointController.onContextAvailable(systemContext)
         }
         FrameworkHook.install(param.classLoader, this)
+        FixedEndpointContextHook.install(param.classLoader, this)
         Qpr1Hook.install(param.classLoader, this)
     }
 
