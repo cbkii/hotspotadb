@@ -134,15 +134,33 @@ object AdbPortProxy {
         module: XposedModule,
     ) {
         var upstream: Socket? = null
-        activeSockets += client
+        synchronized(lock) {
+            if (serverSocket == null || upstreamPort != realPort) {
+                closeQuietly(client)
+                return
+            }
+            activeSockets += client
+        }
+
         try {
             client.tcpNoDelay = true
-            upstream = Socket()
-            upstream.connect(InetSocketAddress(InetAddress.getLoopbackAddress(), realPort), CONNECT_TIMEOUT_MS)
-            upstream.tcpNoDelay = true
-            activeSockets += upstream
+            val connectedUpstream = Socket()
+            upstream = connectedUpstream
+            connectedUpstream.connect(
+                InetSocketAddress(InetAddress.getLoopbackAddress(), realPort),
+                CONNECT_TIMEOUT_MS,
+            )
+            connectedUpstream.tcpNoDelay = true
 
-            val connectedUpstream = upstream
+            synchronized(lock) {
+                if (serverSocket == null || upstreamPort != realPort) {
+                    closeQuietly(client)
+                    closeQuietly(connectedUpstream)
+                    return
+                }
+                activeSockets += connectedUpstream
+            }
+
             val upload =
                 executor.submit {
                     try {
