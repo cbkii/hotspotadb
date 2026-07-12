@@ -47,6 +47,8 @@ object FixedEndpointController {
     private var lastState: String? = null
 
     private var pendingEvaluation: ScheduledFuture<*>? = null
+    private var pendingResetRetries = false
+    private var evaluationGeneration = 0L
     private var portRetryCount = 0
 
     fun configure(
@@ -61,6 +63,9 @@ object FixedEndpointController {
         val stableContext = context.applicationContext ?: context
         val firstContext = this.context == null
         this.context = stableContext
+        if (firstContext) {
+            runCatching { HotspotHelper.setFixedEndpointReady(stableContext, false) }
+        }
         ensureObservers(stableContext)
         scheduleEvaluation(resetRetries = firstContext)
     }
@@ -125,19 +130,34 @@ object FixedEndpointController {
         resetRetries: Boolean = false,
     ) {
         synchronized(lock) {
+            pendingResetRetries = pendingResetRetries || resetRetries
+            evaluationGeneration++
+            val generation = evaluationGeneration
             pendingEvaluation?.cancel(false)
             pendingEvaluation =
                 executor.schedule(
                     {
-                        synchronized(lock) { pendingEvaluation = null }
-                        if (resetRetries) portRetryCount = 0
-                        try {
-                            evaluate()
-                        } catch (e: Throwable) {
-                            val ctx = context
-                            module?.log(Log.ERROR, HotspotAdbModule.TAG, "HotspotAdb: fixed endpoint evaluation failed: $e")
-                            if (ctx != null) {
-                                runCatching { HotspotHelper.setFixedEndpointReady(ctx, false) }
+                        val resetRetriesNow =
+                            synchronized(lock) {
+                                if (generation != evaluationGeneration) {
+                                    null
+                                } else {
+                                    pendingEvaluation = null
+                                    val reset = pendingResetRetries
+                                    pendingResetRetries = false
+                                    reset
+                                }
+                            }
+                        if (resetRetriesNow != null) {
+                            if (resetRetriesNow) portRetryCount = 0
+                            try {
+                                evaluate()
+                            } catch (e: Throwable) {
+                                val ctx = context
+                                module?.log(Log.ERROR, HotspotAdbModule.TAG, "HotspotAdb: fixed endpoint evaluation failed: $e")
+                                if (ctx != null) {
+                                    runCatching { HotspotHelper.setFixedEndpointReady(ctx, false) }
+                                }
                             }
                         }
                     },
