@@ -23,14 +23,23 @@ object SubnetAlias {
         classLoader: ClassLoader,
         module: XposedModule,
     ): Boolean {
-        val iface = HotspotHelper.getApInterfaceName(context) ?: run {
-            module.log(Log.WARN, HotspotAdbModule.TAG, "HotspotAdb: fixed alias skipped; AP interface unavailable")
-            return false
-        }
+        val iface =
+            HotspotHelper.getApInterfaceName(context) ?: run {
+                module.log(Log.WARN, HotspotAdbModule.TAG, "HotspotAdb: fixed alias skipped; AP interface unavailable")
+                return false
+            }
 
         val existingInterface = findInterfaceWithFixedAddress()
         if (existingInterface != null) {
-            if (existingInterface != iface) {
+            if (existingInterface == iface) {
+                val wasOwned = appliedInterface == iface && addressOwnedByModule
+                appliedInterface = iface
+                addressOwnedByModule = wasOwned
+                return true
+            }
+            if (existingInterface == appliedInterface && addressOwnedByModule) {
+                if (!remove(classLoader, module)) return false
+            } else {
                 module.log(
                     Log.ERROR,
                     HotspotAdbModule.TAG,
@@ -38,14 +47,10 @@ object SubnetAlias {
                 )
                 return false
             }
-            val wasOwned = appliedInterface == iface && addressOwnedByModule
-            appliedInterface = iface
-            addressOwnedByModule = wasOwned
-            return true
         }
 
-        if (appliedInterface != null && appliedInterface != iface) {
-            remove(classLoader, module)
+        if (appliedInterface != null && appliedInterface != iface && !remove(classLoader, module)) {
+            return false
         }
 
         val netd = NetdCompat.getNetd(classLoader, module) ?: return false
@@ -72,25 +77,30 @@ object SubnetAlias {
     fun remove(
         classLoader: ClassLoader,
         module: XposedModule,
-    ) {
-        val iface = appliedInterface ?: return
-        val owned = addressOwnedByModule
-        appliedInterface = null
-        addressOwnedByModule = false
-        if (!owned) return
+    ): Boolean {
+        val iface = appliedInterface ?: return true
+        if (!addressOwnedByModule) {
+            appliedInterface = null
+            return true
+        }
 
-        val netd = NetdCompat.getNetd(classLoader, module) ?: return
-        try {
+        val netd = NetdCompat.getNetd(classLoader, module) ?: return false
+        return try {
             NetdCompat.removeAddress(netd, iface, HotspotHelper.FIXED_IP, PREFIX_LENGTH)
+            appliedInterface = null
+            addressOwnedByModule = false
             module.log(
                 Log.INFO,
                 HotspotAdbModule.TAG,
                 "HotspotAdb: removed ${HotspotHelper.FIXED_IP}/$PREFIX_LENGTH from $iface",
             )
+            true
         } catch (e: ReflectiveOperationException) {
             module.log(Log.WARN, HotspotAdbModule.TAG, "HotspotAdb: netd remove-address failed on $iface: $e")
+            false
         } catch (e: SecurityException) {
             module.log(Log.WARN, HotspotAdbModule.TAG, "HotspotAdb: netd remove-address denied on $iface: $e")
+            false
         }
     }
 
