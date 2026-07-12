@@ -1,16 +1,19 @@
-# Upstream release tags that are already triaged for this standalone repository.
+# Upstream release tags and ranges already triaged for this standalone repository.
 #
-# Accepted formats (exact-match only):
+# Accepted grammar (strict literal matching):
 #   1) <tag>
 #   2) <owner/repo>@<tag>
 #   3) <base>..<head>
 #   4) <owner/repo>@<base>..<head>
 #
-# Notes:
-# - Blank lines and lines starting with '#' are ignored.
-# - Matching is strict literal. Bare entries (formats 1 and 3) apply ONLY to the default upstream repo (droserasprout/io.drsr.hotspotadb).
-# - Use tuple format (formats 2 and 4) when monitoring overridden upstream repos.
-# - Remove an entry to allow future issue generation for that tag.
+# Rules:
+# - Blank lines and lines beginning with '#' are ignored.
+# - Bare entries (formats 1 and 3) apply only to the default upstream:
+#   droserasprout/io.drsr.hotspotadb
+# - An overridden upstream must use tuple form (formats 2 or 4).
+# - Matching never normalizes 'v' prefixes or other ref spelling.
+# - Malformed entries fail the monitor instead of being silently ignored.
+# - Remove an entry to permit normal monitoring for that exact identity again.
 
 # Baseline at standalone cutover:
 v1.0.0
