@@ -1,50 +1,65 @@
 package io.drsr.hotspotadb
 
 import android.content.Context
-import android.net.wifi.WifiManager
+import android.provider.Settings
 import android.util.Log
+import io.drsr.hotspotadb.compat.AdbManagerCompat
+import io.drsr.hotspotadb.compat.HotspotApi
 import java.net.Inet4Address
 import java.net.NetworkInterface
 
 object HotspotHelper {
+    const val ADB_WIFI_ENABLED = "adb_wifi_enabled"
+    const val FIXED_ENDPOINT_KEY = "hotspot_adb_fixed_endpoint"
+    const val FIXED_ENDPOINT_READY_KEY = "hotspot_adb_fixed_endpoint_ready"
+    const val FIXED_IP = "192.168.49.1"
+    const val FIXED_PORT = 5555
+
     private const val TAG = HotspotAdbModule.TAG
 
-    /**
-     * Hidden Android constant for WifiManager.WIFI_AP_STATE_ENABLED.
-     * Reflection is used because this is not in the public SDK but is stable across AOSP branches.
-     */
-    private const val WIFI_AP_STATE_ENABLED = 13
+    @Volatile
     private var lastReportedState: Boolean? = null
 
+    @Volatile
+    private var lastReportedCandidate: String? = null
+
     fun isHotspotActive(context: Context): Boolean {
-        return try {
-            val wifiManager = context.getSystemService(Context.WIFI_SERVICE) as? WifiManager
-            if (wifiManager == null) {
-                if (lastReportedState != false) {
-                    Log.w(TAG, "HotspotAdb: WIFI_SERVICE not found or wrong type")
-                    lastReportedState = false
-                }
-                return false
-            }
-            val method = wifiManager.javaClass.getMethod("getWifiApState")
-            val state = method.invoke(wifiManager) as Int
-            val active = state == WIFI_AP_STATE_ENABLED
-            if (lastReportedState != active) {
-                Log.i(
-                    TAG,
-                    "HotspotAdb: hotspot state changed to active=$active (state=$state expected=$WIFI_AP_STATE_ENABLED)",
-                )
-                lastReportedState = active
-            }
-            active
-        } catch (e: Exception) {
-            if (lastReportedState != false) {
-                Log.w(TAG, "HotspotAdb: failed to check hotspot state: $e")
-                lastReportedState = false
-            }
-            false
+        val state = HotspotApi.getApState(context)
+        val active = state == HotspotApi.WIFI_AP_STATE_ENABLED
+        if (lastReportedState != active) {
+            Log.i(
+                TAG,
+                "HotspotAdb: hotspot state changed active=$active " +
+                    "state=${state ?: "unavailable"} expected=${HotspotApi.WIFI_AP_STATE_ENABLED}",
+            )
+            lastReportedState = active
+        }
+        return active
+    }
+
+    fun isAdbWifiEnabled(context: Context): Boolean =
+        Settings.Global.getInt(context.contentResolver, ADB_WIFI_ENABLED, 0) == 1
+
+    fun isFixedEndpointEnabled(context: Context): Boolean =
+        Settings.Global.getInt(context.contentResolver, FIXED_ENDPOINT_KEY, 0) == 1
+
+    fun isFixedEndpointReady(context: Context): Boolean =
+        Settings.Global.getInt(context.contentResolver, FIXED_ENDPOINT_READY_KEY, 0) == 1
+
+    fun setFixedEndpointReady(
+        context: Context,
+        ready: Boolean,
+    ) {
+        val old = isFixedEndpointReady(context)
+        if (old != ready) {
+            Settings.Global.putInt(context.contentResolver, FIXED_ENDPOINT_READY_KEY, if (ready) 1 else 0)
+            Log.i(TAG, "HotspotAdb: fixed endpoint ready=$ready")
         }
     }
+
+    fun getAdbWirelessPort(): Int = AdbManagerCompat.getWirelessPort()
+
+    fun getHotspotSsid(context: Context): String = HotspotApi.getHotspotSsid(context)
 
     data class InterfaceCandidate(
         val name: String,
@@ -53,100 +68,117 @@ object HotspotHelper {
         val reason: String,
     )
 
-    /**
-     * Returns the IP address of the hotspot (AP) interface.
-     * Filters out loopback, mobile data (rmnet*), non-wlan interfaces, and the station Wi-Fi IP.
-     */
-    fun getHotspotIpAddress(context: Context): String? {
-        val stationIp = getStationWifiIp(context)
-        return getApInterfaceIp(excludeIp = stationIp)
+    /** Returns the primary hotspot IPv4 address, excluding the optional fixed alias. */
+    fun getHotspotIpAddress(context: Context): String? =
+        findBestCandidate(
+            excludeIp = HotspotApi.getStationWifiIp(context),
+            allowFixedAlias = false,
+        )?.ip
+
+    /** Returns any plausible AP interface IPv4 address, optionally excluding one. */
+    fun getAnyWlanIp(excludeIp: String? = null): String? =
+        findBestCandidate(
+            excludeIp = excludeIp,
+            allowFixedAlias = false,
+        )?.ip
+
+    /** Returns the most likely SoftAP interface name for netd alias management. */
+    fun getApInterfaceName(context: Context): String? =
+        findBestCandidate(
+            excludeIp = HotspotApi.getStationWifiIp(context),
+            allowFixedAlias = true,
+        )?.name
+
+    internal fun scoreInterfaceName(name: String): Int? {
+        val lower = name.lowercase()
+        if (
+            lower == "lo" ||
+            lower.startsWith("rmnet") ||
+            lower.startsWith("ccmni") ||
+            lower.startsWith("tun") ||
+            lower.startsWith("tap") ||
+            lower.startsWith("wg") ||
+            lower.startsWith("clat") ||
+            lower.startsWith("v4-") ||
+            lower.startsWith("dummy") ||
+            lower.startsWith("ip6tnl") ||
+            lower.startsWith("sit")
+        ) {
+            return null
+        }
+        return when {
+            lower.startsWith("ap") -> 100
+            lower.startsWith("swlan") -> 90
+            lower.startsWith("softap") -> 80
+            lower.startsWith("wlan") -> 70
+            lower.startsWith("rndis") || lower.startsWith("usb") -> 10
+            lower.startsWith("eth") -> 10
+            else -> 50
+        }
     }
 
-    /** Returns any wlan/ap interface IP, optionally excluding one. */
-    fun getAnyWlanIp(excludeIp: String? = null): String? = getApInterfaceIp(excludeIp)
-
-    private fun getApInterfaceIp(excludeIp: String? = null): String? {
+    private fun findBestCandidate(
+        excludeIp: String?,
+        allowFixedAlias: Boolean,
+    ): InterfaceCandidate? {
+        val candidates = mutableListOf<InterfaceCandidate>()
+        val rejected = mutableListOf<String>()
         try {
-            val interfaces = NetworkInterface.getNetworkInterfaces()?.toList() ?: return null
-            val candidates = mutableListOf<InterfaceCandidate>()
-            val rejected = mutableListOf<String>()
-
+            val interfaces = NetworkInterface.getNetworkInterfaces()?.toList().orEmpty()
             for (iface in interfaces) {
-                if (iface.isLoopback || !iface.isUp) {
-                    rejected.add("${iface.name}:loopback/down")
+                if (!iface.isUp || iface.isLoopback) {
+                    rejected += "${iface.name}:down/loopback"
                     continue
                 }
-
-                if (
-                    iface.name.startsWith("rmnet") ||
-                    iface.name.startsWith("ccmni") ||
-                    iface.name.startsWith("tun") ||
-                    iface.name.startsWith("clat")
-                ) {
-                    rejected.add("${iface.name}:cell/vpn/clat")
+                val score = scoreInterfaceName(iface.name)
+                if (score == null) {
+                    rejected += "${iface.name}:excluded-kind"
                     continue
                 }
-
-                for (addr in iface.inetAddresses) {
-                    if (addr is Inet4Address && !addr.isLoopbackAddress) {
-                        val ip = addr.hostAddress ?: continue
-                        if (ip == excludeIp) {
-                            rejected.add("${iface.name}:station-ip($ip)")
-                            continue
-                        }
-
-                        val score =
-                            when {
-                                iface.name.startsWith("ap") -> 100
-                                iface.name.startsWith("swlan") -> 90
-                                iface.name.startsWith("softap") -> 80
-                                iface.name.startsWith("wlan") -> 70
-                                iface.name.startsWith("rndis") -> 10 // USB tethering fallback
-                                iface.name.startsWith("eth") -> 10 // Ethernet fallback
-                                else -> 50
-                            }
-
-                        candidates.add(InterfaceCandidate(iface.name, ip, score, "valid IPv4"))
-                        break
+                var acceptedAddress = false
+                for (address in iface.inetAddresses) {
+                    if (address !is Inet4Address || address.isLoopbackAddress || address.isLinkLocalAddress) continue
+                    val ip = address.hostAddress ?: continue
+                    if (ip == excludeIp) {
+                        rejected += "${iface.name}:station-ip($ip)"
+                        continue
                     }
+                    if (!allowFixedAlias && ip == FIXED_IP) {
+                        rejected += "${iface.name}:fixed-alias($ip)"
+                        continue
+                    }
+                    candidates += InterfaceCandidate(iface.name, ip, score, "usable IPv4")
+                    acceptedAddress = true
                 }
-                if (candidates.none { it.name == iface.name }) {
-                    rejected.add("${iface.name}:no-ipv4")
-                }
+                if (!acceptedAddress) rejected += "${iface.name}:no-usable-ipv4"
             }
+        } catch (e: RuntimeException) {
+            Log.w(TAG, "HotspotAdb: interface enumeration failed: $e")
+            return null
+        }
 
-            val bestCandidate =
-                candidates
-                    .sortedWith(compareByDescending<InterfaceCandidate> { it.score }.thenBy { it.name }.thenBy { it.ip })
-                    .firstOrNull()
+        val selected =
+            candidates
+                .sortedWith(
+                    compareByDescending<InterfaceCandidate> { it.score }
+                        .thenBy { it.name }
+                        .thenBy { it.ip == FIXED_IP }
+                        .thenBy { it.ip },
+                ).firstOrNull()
 
-            if (bestCandidate != null) {
+        val signature = selected?.let { "${it.name}/${it.ip}/${it.score}" } ?: "none"
+        if (signature != lastReportedCandidate) {
+            if (selected != null) {
                 Log.i(
                     TAG,
-                    "HotspotAdb: selected hotspot interface=${bestCandidate.name} ip=${bestCandidate.ip} score=${bestCandidate.score}",
+                    "HotspotAdb: selected hotspot interface=${selected.name} " +
+                        "ip=${selected.ip} score=${selected.score}",
                 )
-                return bestCandidate.ip
             } else {
-                Log.w(
-                    TAG,
-                    "HotspotAdb: no hotspot IPv4 found. rejected=${rejected.joinToString()}",
-                )
+                Log.w(TAG, "HotspotAdb: no hotspot IPv4 candidate; rejected=${rejected.joinToString()}")
             }
-        } catch (e: Exception) {
-            Log.w(TAG, "HotspotAdb: failed to get hotspot IP: $e")
+            lastReportedCandidate = signature
         }
-        return null
-    }
-
-    @Suppress("DEPRECATION")
-    private fun getStationWifiIp(context: Context): String? {
-        return try {
-            val wifiManager = context.getSystemService(Context.WIFI_SERVICE) as WifiManager
-            val ipInt = wifiManager.connectionInfo.ipAddress
-            if (ipInt == 0) return null
-            "${ipInt and 0xFF}.${ipInt shr 8 and 0xFF}.${ipInt shr 16 and 0xFF}.${ipInt shr 24 and 0xFF}"
-        } catch (_: Exception) {
-            null
-        }
+        return selected
     }
 }
