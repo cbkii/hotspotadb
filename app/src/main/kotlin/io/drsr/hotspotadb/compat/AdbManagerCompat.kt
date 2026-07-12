@@ -4,8 +4,8 @@ import android.os.IBinder
 
 /** Compatibility access to adbd's current wireless TLS port. */
 object AdbManagerCompat {
-    fun getWirelessPort(): Int =
-        try {
+    fun getWirelessPort(): Int {
+        return try {
             val serviceManager = Class.forName("android.os.ServiceManager")
             val binder =
                 serviceManager
@@ -22,4 +22,5 @@ object AdbManagerCompat {
         } catch (_: SecurityException) {
             -1
         }
+    }
 }
