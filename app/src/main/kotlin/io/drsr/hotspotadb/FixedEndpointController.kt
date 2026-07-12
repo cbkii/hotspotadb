@@ -1,8 +1,12 @@
 package io.drsr.hotspotadb
 
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.database.ContentObserver
 import android.net.Uri
+import android.net.wifi.WifiManager
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
@@ -12,6 +16,8 @@ import java.util.concurrent.Executors
 
 /** Coordinates the fixed subnet alias and TLS-preserving port proxy in system_server. */
 object FixedEndpointController {
+    private const val WIFI_AP_STATE_CHANGED_ACTION = "android.net.wifi.WIFI_AP_STATE_CHANGED"
+
     private val lock = Any()
     private val executor =
         Executors.newSingleThreadExecutor { runnable ->
@@ -28,7 +34,13 @@ object FixedEndpointController {
     private var context: Context? = null
 
     @Volatile
-    private var observerRegistered = false
+    private var contentObserversRegistered = false
+
+    @Volatile
+    private var hotspotReceiverRegistered = false
+
+    @Volatile
+    private var hotspotReceiver: BroadcastReceiver? = null
 
     @Volatile
     private var lastState: String? = null
@@ -49,33 +61,57 @@ object FixedEndpointController {
     }
 
     private fun ensureObservers(context: Context) {
-        if (observerRegistered) return
         synchronized(lock) {
-            if (observerRegistered) return
-            val observer =
-                object : ContentObserver(Handler(Looper.getMainLooper())) {
-                    override fun onChange(
-                        selfChange: Boolean,
-                        uri: Uri?,
-                    ) {
-                        scheduleEvaluation()
+            if (!contentObserversRegistered) {
+                val observer =
+                    object : ContentObserver(Handler(Looper.getMainLooper())) {
+                        override fun onChange(
+                            selfChange: Boolean,
+                            uri: Uri?,
+                        ) {
+                            scheduleEvaluation()
+                        }
                     }
+                try {
+                    context.contentResolver.registerContentObserver(
+                        Settings.Global.getUriFor(HotspotHelper.ADB_WIFI_ENABLED),
+                        false,
+                        observer,
+                    )
+                    context.contentResolver.registerContentObserver(
+                        Settings.Global.getUriFor(HotspotHelper.FIXED_ENDPOINT_KEY),
+                        false,
+                        observer,
+                    )
+                    contentObserversRegistered = true
+                    module?.log(Log.INFO, HotspotAdbModule.TAG, "HotspotAdb: fixed endpoint setting observers registered")
+                } catch (e: RuntimeException) {
+                    module?.log(Log.WARN, HotspotAdbModule.TAG, "HotspotAdb: fixed endpoint observer registration failed: $e")
                 }
-            try {
-                context.contentResolver.registerContentObserver(
-                    Settings.Global.getUriFor(HotspotHelper.ADB_WIFI_ENABLED),
-                    false,
-                    observer,
-                )
-                context.contentResolver.registerContentObserver(
-                    Settings.Global.getUriFor(HotspotHelper.FIXED_ENDPOINT_KEY),
-                    false,
-                    observer,
-                )
-                observerRegistered = true
-                module?.log(Log.INFO, HotspotAdbModule.TAG, "HotspotAdb: fixed endpoint observers registered")
-            } catch (e: RuntimeException) {
-                module?.log(Log.WARN, HotspotAdbModule.TAG, "HotspotAdb: fixed endpoint observer registration failed: $e")
+            }
+
+            if (!hotspotReceiverRegistered) {
+                val receiver =
+                    object : BroadcastReceiver() {
+                        override fun onReceive(
+                            receiverContext: Context,
+                            intent: Intent,
+                        ) {
+                            scheduleEvaluation()
+                        }
+                    }
+                try {
+                    val filter =
+                        IntentFilter(WifiManager.WIFI_STATE_CHANGED_ACTION).apply {
+                            addAction(WIFI_AP_STATE_CHANGED_ACTION)
+                        }
+                    context.registerReceiver(receiver, filter, Context.RECEIVER_EXPORTED)
+                    hotspotReceiver = receiver
+                    hotspotReceiverRegistered = true
+                    module?.log(Log.INFO, HotspotAdbModule.TAG, "HotspotAdb: fixed endpoint hotspot receiver registered")
+                } catch (e: RuntimeException) {
+                    module?.log(Log.WARN, HotspotAdbModule.TAG, "HotspotAdb: fixed endpoint receiver registration failed: $e")
+                }
             }
         }
     }
