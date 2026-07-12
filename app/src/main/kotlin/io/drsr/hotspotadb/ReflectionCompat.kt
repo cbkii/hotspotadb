@@ -123,7 +123,7 @@ object ReflectionCompat {
         return null
     }
 
-    private fun tryFindClass(
+    fun tryFindClass(
         name: String,
         classLoader: ClassLoader,
     ): Class<*>? =

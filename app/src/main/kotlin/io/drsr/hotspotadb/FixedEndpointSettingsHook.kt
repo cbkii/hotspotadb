@@ -187,7 +187,7 @@ object FixedEndpointSettingsHook {
         module: XposedModule,
     ): Any? {
         val switchClass =
-            tryFindClass("androidx.preference.SwitchPreferenceCompat", classLoader) ?: run {
+            ReflectionCompat.tryFindClass("androidx.preference.SwitchPreferenceCompat", classLoader) ?: run {
                 module.log(Log.WARN, HotspotAdbModule.TAG, "HotspotAdb: SwitchPreferenceCompat unavailable")
                 return null
             }
@@ -196,7 +196,7 @@ object FixedEndpointSettingsHook {
         callMethod(preference, "setTitle", "Fixed hotspot endpoint" as CharSequence)
 
         val listenerClass =
-            tryFindClass("androidx.preference.Preference\$OnPreferenceChangeListener", classLoader) ?: return null
+            ReflectionCompat.tryFindClass("androidx.preference.Preference\$OnPreferenceChangeListener", classLoader) ?: return null
         val listener =
             Proxy.newProxyInstance(classLoader, arrayOf(listenerClass)) { _, _, args ->
                 val enabled = args?.getOrNull(1) as? Boolean ?: false
@@ -310,16 +310,6 @@ object FixedEndpointSettingsHook {
         } catch (_: ReflectiveOperationException) {
             null
         } catch (_: SecurityException) {
-            null
-        }
-
-    private fun tryFindClass(
-        name: String,
-        classLoader: ClassLoader,
-    ): Class<*>? =
-        try {
-            Class.forName(name, false, classLoader)
-        } catch (_: ClassNotFoundException) {
             null
         }
 

@@ -137,22 +137,7 @@ object HotspotHelper {
                     rejected += "${iface.name}:excluded-kind"
                     continue
                 }
-                var acceptedAddress = false
-                for (address in iface.inetAddresses) {
-                    if (address !is Inet4Address || address.isLoopbackAddress || address.isLinkLocalAddress) continue
-                    val ip = address.hostAddress ?: continue
-                    if (ip == excludeIp) {
-                        rejected += "${iface.name}:station-ip($ip)"
-                        continue
-                    }
-                    if (!allowFixedAlias && ip == FIXED_IP) {
-                        rejected += "${iface.name}:fixed-alias($ip)"
-                        continue
-                    }
-                    candidates += InterfaceCandidate(iface.name, ip, score, "usable IPv4")
-                    acceptedAddress = true
-                }
-                if (!acceptedAddress) rejected += "${iface.name}:no-usable-ipv4"
+                evaluateInterface(iface, score, excludeIp, allowFixedAlias, candidates, rejected)
             }
         } catch (e: Exception) {
             Log.w(TAG, "HotspotAdb: interface enumeration failed: $e")
@@ -182,5 +167,31 @@ object HotspotHelper {
             lastReportedCandidate = signature
         }
         return selected
+    }
+
+    private fun evaluateInterface(
+        iface: NetworkInterface,
+        score: Int,
+        excludeIp: String?,
+        allowFixedAlias: Boolean,
+        candidates: MutableList<InterfaceCandidate>,
+        rejected: MutableList<String>,
+    ) {
+        var acceptedAddress = false
+        for (address in iface.inetAddresses) {
+            if (address !is Inet4Address || address.isLoopbackAddress || address.isLinkLocalAddress) continue
+            val ip = address.hostAddress ?: continue
+            if (ip == excludeIp) {
+                rejected += "${iface.name}:station-ip($ip)"
+                continue
+            }
+            if (!allowFixedAlias && ip == FIXED_IP) {
+                rejected += "${iface.name}:fixed-alias($ip)"
+                continue
+            }
+            candidates += InterfaceCandidate(iface.name, ip, score, "usable IPv4")
+            acceptedAddress = true
+        }
+        if (!acceptedAddress) rejected += "${iface.name}:no-usable-ipv4"
     }
 }
