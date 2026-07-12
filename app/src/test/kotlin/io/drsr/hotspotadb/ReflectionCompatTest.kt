@@ -192,17 +192,17 @@ class ReflectionCompatTest {
     }
 
     @Test
-    fun `getFieldByNamesOrTypes prioritises requested name`() {
+    fun `getFieldByNamesOrTypes prioritises requested name at current class level`() {
         val field =
             ReflectionCompat.getFieldByNamesOrTypes(
                 Dummy(),
-                listOf("baseIntField"),
+                listOf("stringField"),
                 listOf("int"),
             )
 
         assertNotNull(field)
-        assertEquals("baseIntField", field?.name)
-        assertEquals(BaseDummy::class.java, field?.declaringClass)
+        assertEquals("stringField", field?.name)
+        assertEquals(Dummy::class.java, field?.declaringClass)
     }
 
     @Test
