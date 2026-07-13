@@ -5,9 +5,18 @@ import io.github.libxposed.api.XposedModule
 import java.lang.reflect.Constructor
 import java.lang.reflect.Field
 import java.lang.reflect.Method
+import java.util.ArrayDeque
 
 object ReflectionCompat {
     private const val TAG = HotspotAdbModule.TAG
+    private const val ASSIGNABLE_SCORE_BASE = 10
+    private const val NULL_ARGUMENT_SCORE = 100
+    private const val SYNTHETIC_METHOD_PENALTY = 1_000
+
+    private data class MethodCandidate(
+        val method: Method,
+        val score: Int,
+    )
 
     fun findFirstClass(
         classLoader: ClassLoader,
@@ -132,4 +141,75 @@ object ReflectionCompat {
         } catch (_: ClassNotFoundException) {
             null
         }
+
+    /**
+     * Selects a public method compatible with runtime arguments.
+     *
+     * Exact reference and boxed-to-primitive matches win over assignable supertypes. Null only
+     * matches reference parameters. Stable signature ordering removes dependence on the JVM's
+     * unspecified [Class.getMethods] array order.
+     */
+    internal fun findCompatibleMethod(
+        clazz: Class<*>,
+        name: String,
+        args: Array<out Any?>,
+    ): Method? =
+        clazz.methods
+            .asSequence()
+            .filter { it.name == name && it.parameterCount == args.size }
+            .mapNotNull { method ->
+                var score = 0
+                for (index in args.indices) {
+                    val argumentScore = compatibilityScore(method.parameterTypes[index], args[index]) ?: return@mapNotNull null
+                    score += argumentScore
+                }
+                if (method.isBridge || method.isSynthetic) score += SYNTHETIC_METHOD_PENALTY
+                MethodCandidate(method, score)
+            }.sortedWith(
+                compareBy<MethodCandidate> { it.score }
+                    .thenBy { it.method.toGenericString() },
+            ).firstOrNull()
+            ?.method
+
+    private fun compatibilityScore(
+        parameter: Class<*>,
+        argument: Any?,
+    ): Int? {
+        if (argument == null) return if (parameter.isPrimitive) null else NULL_ARGUMENT_SCORE
+
+        val argumentType = argument.javaClass
+        if (parameter == argumentType || primitiveWrapper(parameter) == argumentType) return 0
+        if (!parameter.isAssignableFrom(argumentType)) return null
+        return ASSIGNABLE_SCORE_BASE + inheritanceDistance(argumentType, parameter)
+    }
+
+    private fun primitiveWrapper(primitive: Class<*>): Class<*>? =
+        when (primitive) {
+            Boolean::class.javaPrimitiveType -> Boolean::class.java
+            Byte::class.javaPrimitiveType -> Byte::class.java
+            Short::class.javaPrimitiveType -> Short::class.java
+            Char::class.javaPrimitiveType -> Char::class.java
+            Int::class.javaPrimitiveType -> Int::class.java
+            Long::class.javaPrimitiveType -> Long::class.java
+            Float::class.javaPrimitiveType -> Float::class.java
+            Double::class.javaPrimitiveType -> Double::class.java
+            else -> null
+        }
+
+    private fun inheritanceDistance(
+        source: Class<*>,
+        target: Class<*>,
+    ): Int {
+        val queue = ArrayDeque<Pair<Class<*>, Int>>()
+        val visited = mutableSetOf<Class<*>>()
+        queue.add(source to 0)
+        while (queue.isNotEmpty()) {
+            val (current, distance) = queue.removeFirst()
+            if (!visited.add(current)) continue
+            if (current == target) return distance
+            current.superclass?.let { queue.add(it to distance + 1) }
+            current.interfaces.forEach { queue.add(it to distance + 1) }
+        }
+        return Int.MAX_VALUE / 4
+    }
 }
