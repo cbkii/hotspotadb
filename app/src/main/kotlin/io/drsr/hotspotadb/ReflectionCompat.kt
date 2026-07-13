@@ -16,6 +16,7 @@ object ReflectionCompat {
     private data class MethodCandidate(
         val method: Method,
         val score: Int,
+        val declaringDistance: Int,
     )
 
     fun findFirstClass(
@@ -138,19 +139,18 @@ object ReflectionCompat {
         }
 
     /**
-     * Selects a public method compatible with runtime arguments.
+     * Selects a compatible method from the class hierarchy and public interface surface.
      *
      * Exact reference and boxed-to-primitive matches win over assignable supertypes. Null only
-     * matches reference parameters. Stable signature ordering removes dependence on the JVM's
-     * unspecified [Class.getMethods] array order.
+     * matches reference parameters. Methods declared closer to the runtime class win ties, while
+     * stable signature ordering removes dependence on JVM reflection array ordering.
      */
     internal fun findCompatibleMethod(
         clazz: Class<*>,
         name: String,
         args: Array<out Any?>,
     ): Method? =
-        clazz.methods
-            .asSequence()
+        compatibleMethodSurface(clazz)
             .filter { it.name == name && it.parameterCount == args.size }
             .mapNotNull { method ->
                 var score = 0
@@ -159,12 +159,38 @@ object ReflectionCompat {
                     score += argumentScore
                 }
                 if (method.isBridge || method.isSynthetic) score += SYNTHETIC_METHOD_PENALTY
-                MethodCandidate(method, score)
+                MethodCandidate(
+                    method = method,
+                    score = score,
+                    declaringDistance = inheritanceDistance(clazz, method.declaringClass),
+                )
             }.sortedWith(
                 compareBy<MethodCandidate> { it.score }
+                    .thenBy { it.declaringDistance }
                     .thenBy { it.method.toGenericString() },
             ).firstOrNull()
             ?.method
+
+    private fun compatibleMethodSurface(clazz: Class<*>): Sequence<Method> =
+        sequence {
+            var current: Class<*>? = clazz
+            while (current != null && current != Any::class.java) {
+                yieldAll(current.declaredMethods.asSequence())
+                current = current.superclass
+            }
+            yieldAll(clazz.methods.asSequence())
+        }.distinctBy { method ->
+            buildString {
+                append(method.declaringClass.name)
+                append('#')
+                append(method.name)
+                append('(')
+                append(method.parameterTypes.joinToString(",") { it.name })
+                append(')')
+                append(':')
+                append(method.returnType.name)
+            }
+        }
 
     private fun compatibilityScore(
         parameter: Class<*>,
