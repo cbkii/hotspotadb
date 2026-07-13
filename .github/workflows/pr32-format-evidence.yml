@@ -25,14 +25,25 @@ jobs:
           java-version: "21"
       - uses: android-actions/setup-android@v4
       - uses: gradle/actions/setup-gradle@v4
-      - name: Format Kotlin sources
-        run: gradle --no-daemon --console=plain ktlintFormat
-      - name: Capture formatter evidence
+      - name: Format Kotlin sources without mutating the branch
         shell: bash
         run: |
           mkdir -p formatter-evidence
+          set +e
+          gradle --no-daemon --console=plain ktlintFormat \
+            > formatter-evidence/ktlint-format.log 2>&1
+          printf '%s\n' "$?" > formatter-evidence/ktlint-format-exit-code.txt
+          set -e
+      - name: Capture formatter evidence
+        shell: bash
+        run: |
           git diff -- app/src > formatter-evidence/ktlint.patch
           git diff --name-only -- app/src > formatter-evidence/changed-files.txt
+          set +e
+          gradle --no-daemon --console=plain ktlintCheck \
+            > formatter-evidence/ktlint-check-after-format.log 2>&1
+          printf '%s\n' "$?" > formatter-evidence/ktlint-check-exit-code.txt
+          set -e
           cp --parents \
             app/src/main/kotlin/io/drsr/hotspotadb/FixedEndpointSettingsHook.kt \
             app/src/main/kotlin/io/drsr/hotspotadb/HotspotHelper.kt \
