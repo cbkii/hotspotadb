@@ -320,7 +320,16 @@ object FixedEndpointSettingsHook {
         vararg args: Any?,
     ): Any? =
         try {
-            val method = ReflectionCompat.findCompatibleMethod(target.javaClass, name, args) ?: return null
+            val method =
+                ReflectionCompat.findCompatibleMethod(target.javaClass, name, args) ?: run {
+                    val argumentTypes = args.joinToString { it?.javaClass?.name ?: "null" }
+                    Log.w(
+                        HotspotAdbModule.TAG,
+                        "HotspotAdb: fixed endpoint callMethod no compatible overload " +
+                            "target=${target.javaClass.name} method=$name args=[$argumentTypes]",
+                    )
+                    return null
+                }
             method.isAccessible = true
             method.invoke(target, *args)
         } catch (e: ReflectiveOperationException) {
