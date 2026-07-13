@@ -143,6 +143,20 @@ class ReflectionCompatTest {
     }
 
     @Test
+    fun `compatible method finds inherited protected method`() {
+        val method =
+            ReflectionCompat.findCompatibleMethod(
+                Dummy::class.java,
+                "baseMethod",
+                emptyArray(),
+            )
+
+        assertNotNull(method)
+        assertEquals(BaseDummy::class.java, method?.declaringClass)
+        assertEquals("base", method?.invoke(Dummy()))
+    }
+
+    @Test
     fun `findConstructor finds no-arg constructor`() {
         val constructor =
             ReflectionCompat.findConstructor(
