@@ -20,8 +20,8 @@ android {
         // minSdk stays at 35 (Android 15): the module targets Android 15+ only
         minSdk = 35
         targetSdk = 36
-        versionCode = 14
-        versionName = "2.3.0"
+        versionCode = 15
+        versionName = "3.0.0"
     }
 
     signingConfigs {
