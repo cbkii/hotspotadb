@@ -1,4 +1,4 @@
-package io.drsr.hotspotadb
+package io.cb.hotspotadb
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull

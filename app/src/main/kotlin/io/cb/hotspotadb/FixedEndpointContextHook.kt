@@ -1,7 +1,7 @@
-package io.drsr.hotspotadb
+package io.cb.hotspotadb
 
-import io.drsr.hotspotadb.compat.AdbFrameworkRefs
-import io.drsr.hotspotadb.compat.AdbHandlerContextCompat
+import io.cb.hotspotadb.compat.AdbFrameworkRefs
+import io.cb.hotspotadb.compat.AdbHandlerContextCompat
 import io.github.libxposed.api.XposedModule
 
 /** Captures system_server context on the ADB path shared by Android 15 and 16. */

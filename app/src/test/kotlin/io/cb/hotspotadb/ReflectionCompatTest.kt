@@ -1,4 +1,4 @@
-package io.drsr.hotspotadb
+package io.cb.hotspotadb
 
 import io.github.libxposed.api.XposedModule
 import org.junit.Assert.assertEquals

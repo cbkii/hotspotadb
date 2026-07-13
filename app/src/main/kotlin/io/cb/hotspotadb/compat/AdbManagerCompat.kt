@@ -1,4 +1,4 @@
-package io.drsr.hotspotadb.compat
+package io.cb.hotspotadb.compat
 
 import android.os.IBinder
 

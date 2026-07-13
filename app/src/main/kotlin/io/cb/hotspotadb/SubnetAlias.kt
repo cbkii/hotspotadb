@@ -1,8 +1,8 @@
-package io.drsr.hotspotadb
+package io.cb.hotspotadb
 
 import android.content.Context
 import android.util.Log
-import io.drsr.hotspotadb.compat.NetdCompat
+import io.cb.hotspotadb.compat.NetdCompat
 import io.github.libxposed.api.XposedModule
 import java.net.Inet4Address
 import java.net.NetworkInterface

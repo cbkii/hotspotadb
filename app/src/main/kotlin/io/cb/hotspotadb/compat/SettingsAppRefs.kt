@@ -1,6 +1,6 @@
-package io.drsr.hotspotadb.compat
+package io.cb.hotspotadb.compat
 
-import io.drsr.hotspotadb.ReflectionCompat
+import io.cb.hotspotadb.ReflectionCompat
 import io.github.libxposed.api.XposedModule
 
 /** AOSP Settings class names that changed between Android 15 and Android 16. */

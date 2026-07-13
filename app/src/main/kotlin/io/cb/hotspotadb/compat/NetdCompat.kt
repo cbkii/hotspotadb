@@ -1,8 +1,8 @@
-package io.drsr.hotspotadb.compat
+package io.cb.hotspotadb.compat
 
 import android.os.IBinder
 import android.util.Log
-import io.drsr.hotspotadb.HotspotAdbModule
+import io.cb.hotspotadb.HotspotAdbModule
 import io.github.libxposed.api.XposedModule
 
 /** Reflective INetd access across legacy and Connectivity-mainline class names. */

@@ -1,10 +1,10 @@
-package io.drsr.hotspotadb
+package io.cb.hotspotadb
 
 import android.content.Context
 import android.provider.Settings
 import android.util.Log
-import io.drsr.hotspotadb.compat.AdbManagerCompat
-import io.drsr.hotspotadb.compat.HotspotApi
+import io.cb.hotspotadb.compat.AdbManagerCompat
+import io.cb.hotspotadb.compat.HotspotApi
 import java.net.Inet4Address
 import java.net.InetAddress
 import java.net.NetworkInterface
