@@ -1,0 +1,50 @@
+name: PR32 format evidence
+
+on:
+  push:
+    branches:
+      - fix/pr31-reflection-hotspot-hardening
+    paths:
+      - "app/src/**/*.kt"
+      - ".github/workflows/pr32-format-evidence.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  format-evidence:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: android-actions/setup-android@v4
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Format Kotlin sources
+        run: gradle --no-daemon --console=plain ktlintFormat
+      - name: Capture formatter evidence
+        shell: bash
+        run: |
+          mkdir -p formatter-evidence
+          git diff -- app/src > formatter-evidence/ktlint.patch
+          git diff --name-only -- app/src > formatter-evidence/changed-files.txt
+          cp --parents \
+            app/src/main/kotlin/io/drsr/hotspotadb/FixedEndpointSettingsHook.kt \
+            app/src/main/kotlin/io/drsr/hotspotadb/HotspotHelper.kt \
+            app/src/main/kotlin/io/drsr/hotspotadb/ReflectionCompat.kt \
+            app/src/main/kotlin/io/drsr/hotspotadb/SettingsHook.kt \
+            app/src/test/kotlin/io/drsr/hotspotadb/HotspotHelperTest.kt \
+            app/src/test/kotlin/io/drsr/hotspotadb/ReflectionCompatTest.kt \
+            formatter-evidence/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pr32-ktlint-formatted-files
+          path: formatter-evidence
+          if-no-files-found: error
+          retention-days: 3
+          compression-level: 0
