@@ -1,6 +1,6 @@
-package io.drsr.hotspotadb.compat
+package io.cb.hotspotadb.compat
 
-import io.drsr.hotspotadb.ReflectionCompat
+import io.cb.hotspotadb.ReflectionCompat
 import io.github.libxposed.api.XposedModule
 
 /** Android-version-specific ADB framework internals used by system_server hooks. */

@@ -1,7 +1,7 @@
-package io.drsr.hotspotadb.compat
+package io.cb.hotspotadb.compat
 
 import android.content.Context
-import io.drsr.hotspotadb.ReflectionCompat
+import io.cb.hotspotadb.ReflectionCompat
 
 /** Extracts system_server context from nested or top-level ADB handler layouts. */
 object AdbHandlerContextCompat {

@@ -1,8 +1,8 @@
-package io.drsr.hotspotadb
+package io.cb.hotspotadb
 
 import android.util.Log
-import io.drsr.hotspotadb.compat.AdbFrameworkRefs
-import io.drsr.hotspotadb.compat.AdbHandlerContextCompat
+import io.cb.hotspotadb.compat.AdbFrameworkRefs
+import io.cb.hotspotadb.compat.AdbHandlerContextCompat
 import io.github.libxposed.api.XposedModule
 
 /** Android 16 QPR1 compatibility for the verifyWifiNetwork trust gate. */

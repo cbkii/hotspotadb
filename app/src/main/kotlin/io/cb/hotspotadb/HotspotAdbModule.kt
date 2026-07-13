@@ -1,7 +1,7 @@
-package io.drsr.hotspotadb
+package io.cb.hotspotadb
 
 import android.util.Log
-import io.drsr.hotspotadb.compat.SystemContextCompat
+import io.cb.hotspotadb.compat.SystemContextCompat
 import io.github.libxposed.api.XposedModule
 import io.github.libxposed.api.XposedModuleInterface.ModuleLoadedParam
 import io.github.libxposed.api.XposedModuleInterface.PackageLoadedParam

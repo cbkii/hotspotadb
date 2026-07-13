@@ -1,4 +1,4 @@
-package io.drsr.hotspotadb
+package io.cb.hotspotadb
 
 import android.content.Context
 import android.database.ContentObserver
@@ -7,7 +7,7 @@ import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
 import android.util.Log
-import io.drsr.hotspotadb.compat.SettingsAppRefs
+import io.cb.hotspotadb.compat.SettingsAppRefs
 import io.github.libxposed.api.XposedModule
 import java.lang.ref.WeakReference
 import java.lang.reflect.Proxy
