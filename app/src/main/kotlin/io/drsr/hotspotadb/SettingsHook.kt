@@ -45,8 +45,7 @@ object SettingsHook {
     private val methodCache: MutableMap<String, Method> =
         Collections.synchronizedMap(
             object : java.util.LinkedHashMap<String, Method>(METHOD_CACHE_MAX_SIZE, 0.75f, true) {
-                override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Method>?): Boolean =
-                    size > METHOD_CACHE_MAX_SIZE
+                override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Method>?): Boolean = size > METHOD_CACHE_MAX_SIZE
             },
         )
 
@@ -435,8 +434,7 @@ object SettingsHook {
         module.log(Log.DEBUG, TAG, "HotspotAdb: cleaned up listeners for WifiTetherSettings")
     }
 
-    private fun isAdbWifiEnabled(context: Context): Boolean =
-        Settings.Global.getInt(context.contentResolver, ADB_WIFI_ENABLED, 0) == 1
+    private fun isAdbWifiEnabled(context: Context): Boolean = Settings.Global.getInt(context.contentResolver, ADB_WIFI_ENABLED, 0) == 1
 
     private fun getWirelessDebuggingSummary(
         context: Context,
