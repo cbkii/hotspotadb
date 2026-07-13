@@ -280,8 +280,8 @@ object SettingsHook {
         module: XposedModule,
     ): Any? {
         val prefClass =
-            tryFindClass("com.android.settingslib.PrimarySwitchPreference", classLoader)
-                ?: tryFindClass("androidx.preference.SwitchPreferenceCompat", classLoader)
+            ReflectionCompat.tryFindClass("com.android.settingslib.PrimarySwitchPreference", classLoader)
+                ?: ReflectionCompat.tryFindClass("androidx.preference.SwitchPreferenceCompat", classLoader)
                 ?: run {
                     module.log(Log.WARN, TAG, "HotspotAdb: no usable Preference subclass found; toggle injection skipped")
                     return null
@@ -291,7 +291,7 @@ object SettingsHook {
         callMethod(pref, "setKey", "hotspot_adb_wireless_debugging")
         callMethod(pref, "setTitle", "Wireless debugging" as CharSequence)
         // Show the EFFECTIVE state: wireless debugging is usable only when both ADB wifi and
-        // hotspot are active.  Mirrors upstream's updatePrefState logic (commit 5b6437a).
+        // hotspot are active.  Mirrors upstream's updatePrefState fix (commit 5b6437a).
         val enabled = isAdbWifiEnabled(context) && HotspotHelper.isHotspotActive(context)
         callMethod(pref, "setChecked", enabled)
         callMethod(pref, "setSummary", getWirelessDebuggingSummary(context, enabled) as CharSequence)
@@ -299,7 +299,7 @@ object SettingsHook {
         // Toggle switch — enable/disable ADB Wi-Fi via Settings.Global.
         // This is a user-initiated action: it writes directly and is not blocked by any hook.
         val changeListenerClass =
-            tryFindClass(
+            ReflectionCompat.tryFindClass(
                 "androidx.preference.Preference\$OnPreferenceChangeListener",
                 classLoader,
             ) ?: run {
@@ -321,7 +321,7 @@ object SettingsHook {
 
         // Click on left/title area → open the full Wireless Debugging screen.
         val clickListenerClass =
-            tryFindClass(
+            ReflectionCompat.tryFindClass(
                 "androidx.preference.Preference\$OnPreferenceClickListener",
                 classLoader,
             )
@@ -333,16 +333,16 @@ object SettingsHook {
                 ) { _, _, _ ->
                     try {
                         val subSettingsClass =
-                            tryFindClass("com.android.settings.SubSettings", context.classLoader)
-                                ?: tryFindClass("com.android.settings.SubSettings", classLoader)
+                            ReflectionCompat.tryFindClass("com.android.settings.SubSettings", context.classLoader)
+                                ?: ReflectionCompat.tryFindClass("com.android.settings.SubSettings", classLoader)
                         if (subSettingsClass != null) {
                             // Android 16+: AdbWirelessDebuggingFragment; Android 15: WirelessDebuggingFragment
                             val fragmentClass =
                                 (
-                                    tryFindClass(
+                                    ReflectionCompat.tryFindClass(
                                         "com.android.settings.development.AdbWirelessDebuggingFragment",
                                         classLoader,
-                                    ) ?: tryFindClass(
+                                    ) ?: ReflectionCompat.tryFindClass(
                                         "com.android.settings.development.WirelessDebuggingFragment",
                                         classLoader,
                                     )
@@ -515,16 +515,6 @@ object SettingsHook {
             -1
         }
 
-    private fun tryFindClass(
-        name: String,
-        classLoader: ClassLoader,
-    ): Class<*>? =
-        try {
-            Class.forName(name, false, classLoader)
-        } catch (_: ClassNotFoundException) {
-            null
-        }
-
     private fun tryGetMethod(
         clazz: Class<*>,
         name: String,
@@ -551,17 +541,10 @@ object SettingsHook {
             val method =
                 synchronized(methodCache) {
                     methodCache.getOrPut(cacheKey) {
-                        obj.javaClass.methods.firstOrNull { m ->
-                            m.name == name &&
-                                m.parameterCount == args.size &&
-                                args.indices.all { i ->
-                                    val param = m.parameterTypes[i]
-                                    val arg = args[i]
-                                    arg == null || param.isInstance(arg) || isPrimitiveCompatible(param, arg)
-                                }
-                        } ?: throw NoSuchMethodException(
-                            "${obj.javaClass.name}.$name(${args.joinToString { it?.javaClass?.simpleName ?: "null" }})",
-                        )
+                        findMatchingMethod(obj.javaClass, name, args)
+                            ?: throw NoSuchMethodException(
+                                "${obj.javaClass.name}.$name(${args.joinToString { it?.javaClass?.simpleName ?: "null" }})",
+                            )
                     }
                 }
             method.invoke(obj, *args)
@@ -571,6 +554,21 @@ object SettingsHook {
         } catch (e: IllegalArgumentException) {
             Log.w(TAG, "HotspotAdb: callMethod($name) failed: $e")
             null
+        }
+
+    private fun findMatchingMethod(
+        clazz: Class<*>,
+        name: String,
+        args: Array<out Any?>,
+    ): Method? =
+        clazz.methods.firstOrNull { m ->
+            m.name == name &&
+                m.parameterCount == args.size &&
+                args.indices.all { i ->
+                    val param = m.parameterTypes[i]
+                    val arg = args[i]
+                    arg == null || param.isInstance(arg) || isPrimitiveCompatible(param, arg)
+                }
         }
 
     private fun isPrimitiveCompatible(
@@ -588,23 +586,6 @@ object SettingsHook {
             Char::class.javaPrimitiveType -> value is Char
             else -> false
         }
-
-    private fun getFieldValue(
-        obj: Any,
-        name: String,
-    ): Any? {
-        var cls: Class<*>? = obj.javaClass
-        while (cls != null && cls != Any::class.java) {
-            try {
-                val field = cls.getDeclaredField(name)
-                field.isAccessible = true
-                return field.get(obj)
-            } catch (_: NoSuchFieldException) {
-                cls = cls.superclass
-            }
-        }
-        return null
-    }
 
     // WeakHashMap-based replacement for XposedHelpers.setAdditionalInstanceField /
     // getAdditionalInstanceField.  Keys are held weakly so GC'd fragments are cleaned up.
