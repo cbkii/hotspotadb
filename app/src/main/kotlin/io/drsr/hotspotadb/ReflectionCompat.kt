@@ -180,14 +180,14 @@ object ReflectionCompat {
 
     private fun primitiveWrapper(primitive: Class<*>): Class<*>? =
         when (primitive) {
-            Boolean::class.javaPrimitiveType -> Boolean::class.java
-            Byte::class.javaPrimitiveType -> Byte::class.java
-            Short::class.javaPrimitiveType -> Short::class.java
-            Char::class.javaPrimitiveType -> Char::class.java
-            Int::class.javaPrimitiveType -> Int::class.java
-            Long::class.javaPrimitiveType -> Long::class.java
-            Float::class.javaPrimitiveType -> Float::class.java
-            Double::class.javaPrimitiveType -> Double::class.java
+            Boolean::class.javaPrimitiveType -> Boolean::class.javaObjectType
+            Byte::class.javaPrimitiveType -> Byte::class.javaObjectType
+            Short::class.javaPrimitiveType -> Short::class.javaObjectType
+            Char::class.javaPrimitiveType -> Char::class.javaObjectType
+            Int::class.javaPrimitiveType -> Int::class.javaObjectType
+            Long::class.javaPrimitiveType -> Long::class.javaObjectType
+            Float::class.javaPrimitiveType -> Float::class.javaObjectType
+            Double::class.javaPrimitiveType -> Double::class.javaObjectType
             else -> null
         }
 
