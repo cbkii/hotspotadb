@@ -20,6 +20,7 @@ class ReflectionCompatTest {
 
     open class BaseDummy {
         protected open fun baseMethod(): String = "base"
+
         val baseStringField: String = "baseString"
         private val baseIntField: Int = 10
         val baseDoubleField: Double = 3.14
@@ -34,18 +35,27 @@ class ReflectionCompatTest {
         }
 
         fun publicMethod(): String = "public"
+
         private fun privateMethod(value: Int): Int = value * 2
     }
 
     class OverloadDummy {
         fun select(value: Int): String = "int:$value"
+
         fun select(value: Number): String = "number:$value"
+
         fun reference(value: Number): String = "number:$value"
+
         fun reference(value: Any): String = "any:$value"
+
         fun primitiveOnly(value: Int): Int = value
+
         fun nullable(value: String?): String? = value
+
         fun byteValue(value: Byte): Byte = value
+
         fun shortValue(value: Short): Short = value
+
         fun charValue(value: Char): Char = value
     }
 
