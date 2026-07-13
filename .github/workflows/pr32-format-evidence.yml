@@ -24,13 +24,15 @@ jobs:
           distribution: temurin
           java-version: "21"
       - uses: android-actions/setup-android@v4
+        with:
+          packages: 'build-tools;35.0.0 platforms;android-36 platform-tools cmdline-tools;latest'
       - uses: gradle/actions/setup-gradle@v4
       - name: Format Kotlin sources without mutating the branch
         shell: bash
         run: |
           mkdir -p formatter-evidence
           set +e
-          gradle --no-daemon --console=plain ktlintFormat \
+          ./gradlew --no-daemon --console=plain ktlintFormat \
             > formatter-evidence/ktlint-format.log 2>&1
           printf '%s\n' "$?" > formatter-evidence/ktlint-format-exit-code.txt
           set -e
@@ -40,7 +42,7 @@ jobs:
           git diff -- app/src > formatter-evidence/ktlint.patch
           git diff --name-only -- app/src > formatter-evidence/changed-files.txt
           set +e
-          gradle --no-daemon --console=plain ktlintCheck \
+          ./gradlew --no-daemon --console=plain ktlintCheck \
             > formatter-evidence/ktlint-check-after-format.log 2>&1
           printf '%s\n' "$?" > formatter-evidence/ktlint-check-exit-code.txt
           set -e
