@@ -313,34 +313,21 @@ object FixedEndpointSettingsHook {
             null
         }
 
+    @Suppress("SpreadOperator")
     private fun callMethod(
         target: Any,
         name: String,
         vararg args: Any?,
-    ): Any? {
-        val method =
-            target.javaClass.methods.firstOrNull { candidate ->
-                candidate.name == name &&
-                    candidate.parameterCount == args.size &&
-                    args.indices.all { index -> isCompatible(candidate.parameterTypes[index], args[index]) }
-            } ?: return null
-        method.isAccessible = true
-        return method.invoke(target, *args)
-    }
-
-    private fun isCompatible(
-        parameter: Class<*>,
-        argument: Any?,
-    ): Boolean {
-        if (argument == null) return !parameter.isPrimitive
-        if (parameter.isInstance(argument)) return true
-        return when (parameter) {
-            Boolean::class.javaPrimitiveType -> argument is Boolean
-            Int::class.javaPrimitiveType -> argument is Int
-            Long::class.javaPrimitiveType -> argument is Long
-            Float::class.javaPrimitiveType -> argument is Float
-            Double::class.javaPrimitiveType -> argument is Double
-            else -> false
+    ): Any? =
+        try {
+            val method = ReflectionCompat.findCompatibleMethod(target.javaClass, name, args) ?: return null
+            method.isAccessible = true
+            method.invoke(target, *args)
+        } catch (e: ReflectiveOperationException) {
+            Log.w(HotspotAdbModule.TAG, "HotspotAdb: fixed endpoint callMethod($name) failed: $e")
+            null
+        } catch (e: IllegalArgumentException) {
+            Log.w(HotspotAdbModule.TAG, "HotspotAdb: fixed endpoint callMethod($name) failed: $e")
+            null
         }
-    }
 }
