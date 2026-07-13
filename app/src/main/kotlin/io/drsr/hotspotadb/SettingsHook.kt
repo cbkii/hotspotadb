@@ -56,7 +56,8 @@ object SettingsHook {
     private val methodCache: MutableMap<String, Method> =
         Collections.synchronizedMap(
             object : java.util.LinkedHashMap<String, Method>(METHOD_CACHE_MAX_SIZE, 0.75f, true) {
-                override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Method>?): Boolean = size > METHOD_CACHE_MAX_SIZE
+                override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Method>?): Boolean =
+                    size > METHOD_CACHE_MAX_SIZE
             },
         )
 
@@ -110,20 +111,37 @@ object SettingsHook {
             if (result == false) {
                 val context = chain.getArg(0) as? Context ?: return@intercept result
                 val hotspotActive = HotspotHelper.isHotspotActive(context)
-                module.log(Log.INFO, TAG, "HotspotAdb: isWifiConnected original=$result hotspotActive=$hotspotActive")
+                module.log(
+                    Log.INFO,
+                    TAG,
+                    "HotspotAdb: isWifiConnected original=$result hotspotActive=$hotspotActive",
+                )
                 if (hotspotActive) {
                     module.log(Log.INFO, TAG, "HotspotAdb: isWifiConnected decision=changed(true)")
                     true
                 } else {
-                    module.log(Log.INFO, TAG, "HotspotAdb: isWifiConnected decision=pass-through(false)")
+                    module.log(
+                        Log.INFO,
+                        TAG,
+                        "HotspotAdb: isWifiConnected decision=pass-through(false)",
+                    )
                     result
                 }
             } else {
-                module.log(Log.INFO, TAG, "HotspotAdb: isWifiConnected original=$result decision=pass-through")
+                module.log(
+                    Log.INFO,
+                    TAG,
+                    "HotspotAdb: isWifiConnected original=$result decision=pass-through",
+                )
                 result
             }
         }
-        reporter.report("Settings Wi-Fi gate", "isWifiConnected", Status.INSTALLED, "hooked ${clazz.simpleName}")
+        reporter.report(
+            "Settings Wi-Fi gate",
+            "isWifiConnected",
+            Status.INSTALLED,
+            "hooked ${clazz.simpleName}",
+        )
         module.log(Log.INFO, TAG, "HotspotAdb: hooked ${clazz.simpleName}.isWifiConnected")
     }
 
@@ -169,7 +187,11 @@ object SettingsHook {
             ip
         }
         reporter.report("Settings IPv4", "getIpv4Address", Status.INSTALLED, "hooked")
-        module.log(Log.INFO, TAG, "HotspotAdb: hooked AdbIpAddressPreferenceController.getIpv4Address")
+        module.log(
+            Log.INFO,
+            TAG,
+            "HotspotAdb: hooked AdbIpAddressPreferenceController.getIpv4Address",
+        )
     }
 
     // ---- WifiTetherSettings.onStart / onStop ----
@@ -187,7 +209,12 @@ object SettingsHook {
                 "com.android.settings.wifi.tether.WifiTetherSettings",
             )
         if (clazz == null) {
-            reporter.report("Settings tether fragment", "WifiTetherSettings", Status.MISSING, "class not found")
+            reporter.report(
+                "Settings tether fragment",
+                "WifiTetherSettings",
+                Status.MISSING,
+                "class not found",
+            )
             return
         }
 
@@ -195,11 +222,28 @@ object SettingsHook {
         // with the registration path (onStart) wired but the cleanup path (onStop) absent,
         // which would cause duplicate observer/receiver registrations on re-entry.
         val onStart =
-            ReflectionCompat.findMethod(clazz, module, "Settings tether fragment", "onStart", includeInherited = true)
+            ReflectionCompat.findMethod(
+                clazz,
+                module,
+                "Settings tether fragment",
+                "onStart",
+                includeInherited = true,
+            )
         val onStop =
-            ReflectionCompat.findMethod(clazz, module, "Settings tether fragment", "onStop", includeInherited = true)
+            ReflectionCompat.findMethod(
+                clazz,
+                module,
+                "Settings tether fragment",
+                "onStop",
+                includeInherited = true,
+            )
         if (onStart == null || onStop == null) {
-            reporter.report("Settings tether fragment", "onStart/onStop", Status.MISSING, "lifecycle methods missing")
+            reporter.report(
+                "Settings tether fragment",
+                "onStart/onStop",
+                Status.MISSING,
+                "lifecycle methods missing",
+            )
             return
         }
 
@@ -208,7 +252,11 @@ object SettingsHook {
             try {
                 injectWirelessDebuggingPref(chain.getThisObject()!!, classLoader, module)
             } catch (e: Throwable) {
-                module.log(Log.ERROR, TAG, "HotspotAdb: failed to inject wireless debugging preference: $e")
+                module.log(
+                    Log.ERROR,
+                    TAG,
+                    "HotspotAdb: failed to inject wireless debugging preference: $e",
+                )
             }
             null
         }
@@ -224,8 +272,17 @@ object SettingsHook {
             chain.proceed()
             null
         }
-        reporter.report("Settings tether fragment", "onStart/onStop", Status.INSTALLED, "hooked successfully")
-        module.log(Log.INFO, TAG, "HotspotAdb: hooked WifiTetherSettings.onStop for listener cleanup")
+        reporter.report(
+            "Settings tether fragment",
+            "onStart/onStop",
+            Status.INSTALLED,
+            "hooked successfully",
+        )
+        module.log(
+            Log.INFO,
+            TAG,
+            "HotspotAdb: hooked WifiTetherSettings.onStop for listener cleanup",
+        )
     }
 
     /**
@@ -255,7 +312,12 @@ object SettingsHook {
             }
 
         // Step 1: get the preference, injecting it if this is the first onStart.
-        val existingPref = callMethod(screen, "findPreference", "hotspot_adb_wireless_debugging")
+        val existingPref =
+            callMethod(
+                screen,
+                "findPreference",
+                "hotspot_adb_wireless_debugging",
+            )
         val pref: Any =
             if (existingPref != null) {
                 existingPref
@@ -280,21 +342,33 @@ object SettingsHook {
         module: XposedModule,
     ): Any? {
         val prefClass =
-            ReflectionCompat.tryFindClass("com.android.settingslib.PrimarySwitchPreference", classLoader)
-                ?: ReflectionCompat.tryFindClass("androidx.preference.SwitchPreferenceCompat", classLoader)
-                ?: run {
-                    module.log(Log.WARN, TAG, "HotspotAdb: no usable Preference subclass found; toggle injection skipped")
-                    return null
-                }
+            ReflectionCompat.tryFindClass(
+                "com.android.settingslib.PrimarySwitchPreference",
+                classLoader,
+            ) ?: ReflectionCompat.tryFindClass(
+                "androidx.preference.SwitchPreferenceCompat",
+                classLoader,
+            ) ?: run {
+                module.log(
+                    Log.WARN,
+                    TAG,
+                    "HotspotAdb: no usable Preference subclass found; toggle injection skipped",
+                )
+                return null
+            }
         val pref = prefClass.getConstructor(Context::class.java).newInstance(context)
 
         callMethod(pref, "setKey", "hotspot_adb_wireless_debugging")
         callMethod(pref, "setTitle", "Wireless debugging" as CharSequence)
         // Show the EFFECTIVE state: wireless debugging is usable only when both ADB wifi and
-        // hotspot are active.  Mirrors upstream's updatePrefState fix (commit 5b6437a).
+        // hotspot are active. Mirrors upstream's updatePrefState logic (commit 5b6437a).
         val enabled = isAdbWifiEnabled(context) && HotspotHelper.isHotspotActive(context)
         callMethod(pref, "setChecked", enabled)
-        callMethod(pref, "setSummary", getWirelessDebuggingSummary(context, enabled) as CharSequence)
+        callMethod(
+            pref,
+            "setSummary",
+            getWirelessDebuggingSummary(context, enabled) as CharSequence,
+        )
 
         // Toggle switch — enable/disable ADB Wi-Fi via Settings.Global.
         // This is a user-initiated action: it writes directly and is not blocked by any hook.
@@ -303,7 +377,11 @@ object SettingsHook {
                 "androidx.preference.Preference\$OnPreferenceChangeListener",
                 classLoader,
             ) ?: run {
-                module.log(Log.WARN, TAG, "HotspotAdb: OnPreferenceChangeListener class not found; toggle will not respond")
+                module.log(
+                    Log.WARN,
+                    TAG,
+                    "HotspotAdb: OnPreferenceChangeListener class not found; toggle will not respond",
+                )
                 return null
             }
         val changeProxy =
@@ -312,9 +390,21 @@ object SettingsHook {
                 arrayOf(changeListenerClass),
             ) { _, _, args ->
                 val newValue = args!![1] as Boolean
-                module.log(Log.INFO, TAG, "HotspotAdb: user toggled wireless debugging via hotspot screen: $newValue")
-                Settings.Global.putInt(context.contentResolver, ADB_WIFI_ENABLED, if (newValue) 1 else 0)
-                callMethod(pref, "setSummary", getWirelessDebuggingSummary(context, newValue) as CharSequence)
+                module.log(
+                    Log.INFO,
+                    TAG,
+                    "HotspotAdb: user toggled wireless debugging via hotspot screen: $newValue",
+                )
+                Settings.Global.putInt(
+                    context.contentResolver,
+                    ADB_WIFI_ENABLED,
+                    if (newValue) 1 else 0,
+                )
+                callMethod(
+                    pref,
+                    "setSummary",
+                    getWirelessDebuggingSummary(context, newValue) as CharSequence,
+                )
                 true
             }
         callMethod(pref, "setOnPreferenceChangeListener", changeProxy)
@@ -333,10 +423,15 @@ object SettingsHook {
                 ) { _, _, _ ->
                     try {
                         val subSettingsClass =
-                            ReflectionCompat.tryFindClass("com.android.settings.SubSettings", context.classLoader)
-                                ?: ReflectionCompat.tryFindClass("com.android.settings.SubSettings", classLoader)
+                            ReflectionCompat.tryFindClass(
+                                "com.android.settings.SubSettings",
+                                context.classLoader,
+                            ) ?: ReflectionCompat.tryFindClass(
+                                "com.android.settings.SubSettings",
+                                classLoader,
+                            )
                         if (subSettingsClass != null) {
-                            // Android 16+: AdbWirelessDebuggingFragment; Android 15: WirelessDebuggingFragment
+                            // Android 16+: AdbWirelessDebuggingFragment; Android 15 fallback.
                             val fragmentClass =
                                 (
                                     ReflectionCompat.tryFindClass(
@@ -346,20 +441,30 @@ object SettingsHook {
                                         "com.android.settings.development.WirelessDebuggingFragment",
                                         classLoader,
                                     )
-                                )?.name ?: "com.android.settings.development.WirelessDebuggingFragment"
-                            val intent = android.content.Intent(context, subSettingsClass)
-                            intent.putExtra(
-                                ":settings:show_fragment",
-                                fragmentClass,
-                            )
+                                )?.name
+                                    ?: "com.android.settings.development.WirelessDebuggingFragment"
+                            val intent = Intent(context, subSettingsClass)
+                            intent.putExtra(":settings:show_fragment", fragmentClass)
                             context.startActivity(intent)
                         }
                     } catch (e: android.content.ActivityNotFoundException) {
-                        module.log(Log.WARN, TAG, "HotspotAdb: failed to open Wireless Debugging screen: $e")
+                        module.log(
+                            Log.WARN,
+                            TAG,
+                            "HotspotAdb: failed to open Wireless Debugging screen: $e",
+                        )
                     } catch (e: SecurityException) {
-                        module.log(Log.WARN, TAG, "HotspotAdb: failed to open Wireless Debugging screen: $e")
+                        module.log(
+                            Log.WARN,
+                            TAG,
+                            "HotspotAdb: failed to open Wireless Debugging screen: $e",
+                        )
                     } catch (e: Exception) {
-                        module.log(Log.WARN, TAG, "HotspotAdb: failed to open Wireless Debugging screen: $e")
+                        module.log(
+                            Log.WARN,
+                            TAG,
+                            "HotspotAdb: failed to open Wireless Debugging screen: $e",
+                        )
                     }
                     true
                 }
@@ -367,7 +472,11 @@ object SettingsHook {
         }
 
         callMethod(screen, "addPreference", pref)
-        module.log(Log.INFO, TAG, "HotspotAdb: injected wireless debugging toggle into hotspot settings")
+        module.log(
+            Log.INFO,
+            TAG,
+            "HotspotAdb: injected wireless debugging toggle into hotspot settings",
+        )
         return pref
     }
 
@@ -399,12 +508,20 @@ object SettingsHook {
                         // Reflect effective state: both ADB wifi and hotspot must be active.
                         val on = isAdbWifiEnabled(context) && HotspotHelper.isHotspotActive(context)
                         callMethod(pref, "setChecked", on)
-                        callMethod(pref, "setSummary", getWirelessDebuggingSummary(context, on) as CharSequence)
+                        callMethod(
+                            pref,
+                            "setSummary",
+                            getWirelessDebuggingSummary(context, on) as CharSequence,
+                        )
                     }
                 }
             context.contentResolver.registerContentObserver(uri, false, observer)
             setFragmentExtra(fragment, "hotspot_adb_observer", observer)
-            module.log(Log.DEBUG, TAG, "HotspotAdb: registered ContentObserver for WifiTetherSettings")
+            module.log(
+                Log.DEBUG,
+                TAG,
+                "HotspotAdb: registered ContentObserver for WifiTetherSettings",
+            )
         }
 
         if (getFragmentExtra(fragment, "hotspot_adb_receiver") == null) {
@@ -414,7 +531,11 @@ object SettingsHook {
                     // Reflect effective state: both ADB wifi and hotspot must be active.
                     val on = isAdbWifiEnabled(context) && HotspotHelper.isHotspotActive(context)
                     callMethod(pref, "setChecked", on)
-                    callMethod(pref, "setSummary", getWirelessDebuggingSummary(context, on) as CharSequence)
+                    callMethod(
+                        pref,
+                        "setSummary",
+                        getWirelessDebuggingSummary(context, on) as CharSequence,
+                    )
                 }
             val receiver =
                 object : BroadcastReceiver() {
@@ -436,7 +557,11 @@ object SettingsHook {
             setFragmentExtra(fragment, "hotspot_adb_receiver", receiver)
             setFragmentExtra(fragment, "hotspot_adb_handler", handler)
             setFragmentExtra(fragment, "hotspot_adb_runnable", updatePref)
-            module.log(Log.DEBUG, TAG, "HotspotAdb: registered BroadcastReceiver for WifiTetherSettings")
+            module.log(
+                Log.DEBUG,
+                TAG,
+                "HotspotAdb: registered BroadcastReceiver for WifiTetherSettings",
+            )
         }
     }
 
@@ -478,12 +603,17 @@ object SettingsHook {
             }
         }
 
-        module.log(Log.DEBUG, TAG, "HotspotAdb: cleaned up listeners for WifiTetherSettings")
+        module.log(
+            Log.DEBUG,
+            TAG,
+            "HotspotAdb: cleaned up listeners for WifiTetherSettings",
+        )
     }
 
     // ---- Helpers ----
 
-    private fun isAdbWifiEnabled(context: Context): Boolean = Settings.Global.getInt(context.contentResolver, ADB_WIFI_ENABLED, 0) == 1
+    private fun isAdbWifiEnabled(context: Context): Boolean =
+        Settings.Global.getInt(context.contentResolver, ADB_WIFI_ENABLED, 0) == 1
 
     private fun getWirelessDebuggingSummary(
         context: Context,
@@ -527,8 +657,7 @@ object SettingsHook {
         }
 
     /**
-     * Calls a method by name, choosing the best overload by matching parameter count and
-     * argument types.  Handles boxed→primitive coercion so setChecked(Boolean) works correctly.
+     * Calls a public method by name using a bounded cache of deterministic compatible matches.
      */
     @Suppress("SpreadOperator")
     private fun callMethod(
@@ -537,13 +666,16 @@ object SettingsHook {
         vararg args: Any?,
     ): Any? =
         try {
-            val cacheKey = "${obj.javaClass.name}#$name#${args.joinToString { it?.javaClass?.name ?: "null" }}"
+            val cacheKey =
+                "${obj.javaClass.name}#$name#${args.joinToString { it?.javaClass?.name ?: "null" }}"
             val method =
                 synchronized(methodCache) {
                     methodCache.getOrPut(cacheKey) {
-                        findMatchingMethod(obj.javaClass, name, args)
+                        ReflectionCompat.findCompatibleMethod(obj.javaClass, name, args)
                             ?: throw NoSuchMethodException(
-                                "${obj.javaClass.name}.$name(${args.joinToString { it?.javaClass?.simpleName ?: "null" }})",
+                                "${obj.javaClass.name}.$name(" +
+                                    args.joinToString { it?.javaClass?.simpleName ?: "null" } +
+                                    ")",
                             )
                     }
                 }
@@ -556,39 +688,8 @@ object SettingsHook {
             null
         }
 
-    private fun findMatchingMethod(
-        clazz: Class<*>,
-        name: String,
-        args: Array<out Any?>,
-    ): Method? =
-        clazz.methods.firstOrNull { m ->
-            m.name == name &&
-                m.parameterCount == args.size &&
-                args.indices.all { i ->
-                    val param = m.parameterTypes[i]
-                    val arg = args[i]
-                    arg == null || param.isInstance(arg) || isPrimitiveCompatible(param, arg)
-                }
-        }
-
-    private fun isPrimitiveCompatible(
-        primitive: Class<*>,
-        value: Any,
-    ): Boolean =
-        when (primitive) {
-            Boolean::class.javaPrimitiveType -> value is Boolean
-            Int::class.javaPrimitiveType -> value is Int
-            Long::class.javaPrimitiveType -> value is Long
-            Float::class.javaPrimitiveType -> value is Float
-            Double::class.javaPrimitiveType -> value is Double
-            Byte::class.javaPrimitiveType -> value is Byte
-            Short::class.javaPrimitiveType -> value is Short
-            Char::class.javaPrimitiveType -> value is Char
-            else -> false
-        }
-
     // WeakHashMap-based replacement for XposedHelpers.setAdditionalInstanceField /
-    // getAdditionalInstanceField.  Keys are held weakly so GC'd fragments are cleaned up.
+    // getAdditionalInstanceField. Keys are held weakly so GC'd fragments are cleaned up.
     private fun setFragmentExtra(
         obj: Any,
         key: String,
