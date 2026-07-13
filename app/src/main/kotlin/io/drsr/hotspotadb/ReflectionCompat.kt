@@ -5,9 +5,19 @@ import io.github.libxposed.api.XposedModule
 import java.lang.reflect.Constructor
 import java.lang.reflect.Field
 import java.lang.reflect.Method
+import java.util.ArrayDeque
 
 object ReflectionCompat {
     private const val TAG = HotspotAdbModule.TAG
+    private const val ASSIGNABLE_SCORE_BASE = 10
+    private const val NULL_ARGUMENT_SCORE = 100
+    private const val SYNTHETIC_METHOD_PENALTY = 1_000
+
+    private data class MethodCandidate(
+        val method: Method,
+        val score: Int,
+        val declaringDistance: Int,
+    )
 
     fun findFirstClass(
         classLoader: ClassLoader,
@@ -35,8 +45,6 @@ object ReflectionCompat {
         includeInherited: Boolean,
         vararg params: Class<*>,
     ): Method? {
-        // Walk hierarchy with getDeclaredMethod so protected/package-private methods in
-        // superclasses are reachable, unlike getMethod() which only surfaces public methods.
         var cls: Class<*> = clazz
         while (true) {
             val method = runCatching { cls.getDeclaredMethod(name, *params).also { it.isAccessible = true } }.getOrNull()
@@ -98,9 +106,6 @@ object ReflectionCompat {
         names: List<String>,
         typeNames: List<String>,
     ): Field? {
-        // Probe in caller-specified order: names take priority over type names.
-        // Within each superclass level, try every requested name before any type name so the
-        // lookup is deterministic regardless of getDeclaredFields() ordering.
         var cls: Class<*>? = obj.javaClass
         while (cls != null && cls != Any::class.java) {
             val declaredFields = cls.declaredFields
@@ -123,7 +128,7 @@ object ReflectionCompat {
         return null
     }
 
-    private fun tryFindClass(
+    fun tryFindClass(
         name: String,
         classLoader: ClassLoader,
     ): Class<*>? =
@@ -132,4 +137,103 @@ object ReflectionCompat {
         } catch (_: ClassNotFoundException) {
             null
         }
+
+    /**
+     * Selects a compatible method from the class hierarchy and public interface surface.
+     *
+     * Exact reference and boxed-to-primitive matches win over assignable supertypes. Null only
+     * matches reference parameters. Methods declared closer to the runtime class win ties, while
+     * stable signature ordering removes dependence on JVM reflection array ordering.
+     */
+    internal fun findCompatibleMethod(
+        clazz: Class<*>,
+        name: String,
+        args: Array<out Any?>,
+    ): Method? =
+        compatibleMethodSurface(clazz)
+            .filter { it.name == name && it.parameterCount == args.size }
+            .mapNotNull { method ->
+                var score = 0
+                for (index in args.indices) {
+                    val argumentScore = compatibilityScore(method.parameterTypes[index], args[index]) ?: return@mapNotNull null
+                    score += argumentScore
+                }
+                if (method.isBridge || method.isSynthetic) score += SYNTHETIC_METHOD_PENALTY
+                MethodCandidate(
+                    method = method,
+                    score = score,
+                    declaringDistance = inheritanceDistance(clazz, method.declaringClass),
+                )
+            }.sortedWith(
+                compareBy<MethodCandidate> { it.score }
+                    .thenBy { it.declaringDistance }
+                    .thenBy { it.method.toGenericString() },
+            ).firstOrNull()
+            ?.method
+            ?.also { method -> runCatching { method.isAccessible = true } }
+
+    private fun compatibleMethodSurface(clazz: Class<*>): Sequence<Method> =
+        sequence {
+            var current: Class<*>? = clazz
+            while (current != null && current != Any::class.java) {
+                val declaredMethods = runCatching { current.declaredMethods }.getOrDefault(emptyArray())
+                yieldAll(declaredMethods.asSequence())
+                current = current.superclass
+            }
+            val publicMethods = runCatching { clazz.methods }.getOrDefault(emptyArray())
+            yieldAll(publicMethods.asSequence())
+        }.distinctBy { method ->
+            buildString {
+                append(method.declaringClass.name)
+                append('#')
+                append(method.name)
+                append('(')
+                append(method.parameterTypes.joinToString(",") { it.name })
+                append(')')
+                append(':')
+                append(method.returnType.name)
+            }
+        }
+
+    private fun compatibilityScore(
+        parameter: Class<*>,
+        argument: Any?,
+    ): Int? {
+        if (argument == null) return if (parameter.isPrimitive) null else NULL_ARGUMENT_SCORE
+
+        val argumentType = argument.javaClass
+        if (parameter == argumentType || primitiveWrapper(parameter) == argumentType) return 0
+        if (!parameter.isAssignableFrom(argumentType)) return null
+        return ASSIGNABLE_SCORE_BASE + inheritanceDistance(argumentType, parameter)
+    }
+
+    private fun primitiveWrapper(primitive: Class<*>): Class<*>? =
+        when (primitive) {
+            Boolean::class.javaPrimitiveType -> Boolean::class.javaObjectType
+            Byte::class.javaPrimitiveType -> Byte::class.javaObjectType
+            Short::class.javaPrimitiveType -> Short::class.javaObjectType
+            Char::class.javaPrimitiveType -> Char::class.javaObjectType
+            Int::class.javaPrimitiveType -> Int::class.javaObjectType
+            Long::class.javaPrimitiveType -> Long::class.javaObjectType
+            Float::class.javaPrimitiveType -> Float::class.javaObjectType
+            Double::class.javaPrimitiveType -> Double::class.javaObjectType
+            else -> null
+        }
+
+    private fun inheritanceDistance(
+        source: Class<*>,
+        target: Class<*>,
+    ): Int {
+        val queue = ArrayDeque<Pair<Class<*>, Int>>()
+        val visited = mutableSetOf<Class<*>>()
+        queue.add(source to 0)
+        while (queue.isNotEmpty()) {
+            val (current, distance) = queue.removeFirst()
+            if (!visited.add(current)) continue
+            if (current == target) return distance
+            current.superclass?.let { queue.add(it to distance + 1) }
+            current.interfaces.forEach { queue.add(it to distance + 1) }
+        }
+        return Int.MAX_VALUE / 4
+    }
 }

@@ -39,6 +39,26 @@ class ReflectionCompatTest {
         private fun privateMethod(value: Int): Int = value * 2
     }
 
+    class OverloadDummy {
+        fun select(value: Int): String = "int:$value"
+
+        fun select(value: Number): String = "number:$value"
+
+        fun reference(value: Number): String = "number:$value"
+
+        fun reference(value: Any): String = "any:$value"
+
+        fun primitiveOnly(value: Int): Int = value
+
+        fun nullable(value: String?): String? = value
+
+        fun byteValue(value: Byte): Byte = value
+
+        fun shortValue(value: Short): Short = value
+
+        fun charValue(value: Char): Char = value
+    }
+
     @Test
     fun `findFirstClass finds first existing class`() {
         val clazz =
@@ -49,7 +69,6 @@ class ReflectionCompatTest {
                 "non.existent.Class",
                 Dummy::class.java.name,
             )
-
         assertEquals(Dummy::class.java, clazz)
     }
 
@@ -63,7 +82,6 @@ class ReflectionCompatTest {
                 "non.existent.Class1",
                 "non.existent.Class2",
             )
-
         assertNull(clazz)
     }
 
@@ -77,7 +95,6 @@ class ReflectionCompatTest {
                 "publicMethod",
                 false,
             )
-
         assertNotNull(method)
         assertEquals("publicMethod", method?.name)
     }
@@ -93,7 +110,6 @@ class ReflectionCompatTest {
                 false,
                 Int::class.java,
             )
-
         assertNotNull(method)
         assertEquals("privateMethod", method?.name)
     }
@@ -108,7 +124,6 @@ class ReflectionCompatTest {
                 "baseMethod",
                 true,
             )
-
         assertNotNull(method)
         assertEquals("baseMethod", method?.name)
         assertEquals(BaseDummy::class.java, method?.declaringClass)
@@ -124,8 +139,21 @@ class ReflectionCompatTest {
                 "baseMethod",
                 false,
             )
-
         assertNull(method)
+    }
+
+    @Test
+    fun `compatible method finds inherited protected method`() {
+        val method =
+            ReflectionCompat.findCompatibleMethod(
+                Dummy::class.java,
+                "baseMethod",
+                emptyArray(),
+            )
+
+        assertNotNull(method)
+        assertEquals(BaseDummy::class.java, method?.declaringClass)
+        assertEquals("base", method?.invoke(Dummy()))
     }
 
     @Test
@@ -136,7 +164,6 @@ class ReflectionCompatTest {
                 mockModule,
                 "DummyCtor",
             )
-
         assertNotNull(constructor)
         assertEquals(0, constructor?.parameterCount)
     }
@@ -150,7 +177,6 @@ class ReflectionCompatTest {
                 "DummyCtor",
                 Int::class.java,
             )
-
         assertNotNull(constructor)
         assertEquals(1, constructor?.parameterCount)
     }
@@ -162,9 +188,7 @@ class ReflectionCompatTest {
 
     @Test
     fun `getFieldValueByName reads field from base class`() {
-        val value = ReflectionCompat.getFieldValueByName(Dummy(), "baseStringField")
-
-        assertEquals("baseString", value)
+        assertEquals("baseString", ReflectionCompat.getFieldValueByName(Dummy(), "baseStringField"))
     }
 
     @Test
@@ -180,15 +204,12 @@ class ReflectionCompatTest {
     @Test
     fun `getFieldValueByType walks into base class for unique type`() {
         val value = ReflectionCompat.getFieldValueByType(Dummy(), "double")
-
         assertEquals(3.14, value as Double, 0.0)
     }
 
     @Test
     fun `getFieldValueByType returns null for absent type`() {
-        val value = ReflectionCompat.getFieldValueByType(Dummy(), Long::class.java.name)
-
-        assertNull(value)
+        assertNull(ReflectionCompat.getFieldValueByType(Dummy(), Long::class.java.name))
     }
 
     @Test
@@ -199,7 +220,6 @@ class ReflectionCompatTest {
                 listOf("stringField"),
                 listOf("int"),
             )
-
         assertNotNull(field)
         assertEquals("stringField", field?.name)
         assertEquals(Dummy::class.java, field?.declaringClass)
@@ -213,7 +233,6 @@ class ReflectionCompatTest {
                 listOf("missingField"),
                 listOf("double"),
             )
-
         assertNotNull(field)
         assertEquals("baseDoubleField", field?.name)
         assertEquals(BaseDummy::class.java, field?.declaringClass)
@@ -227,7 +246,73 @@ class ReflectionCompatTest {
                 listOf("missingField"),
                 listOf(Long::class.java.name),
             )
-
         assertNull(field)
+    }
+
+    @Test
+    fun `compatible method prefers boxed primitive exact match`() {
+        val method =
+            ReflectionCompat.findCompatibleMethod(
+                OverloadDummy::class.java,
+                "select",
+                arrayOf(42),
+            )
+        assertNotNull(method)
+        assertEquals(Int::class.javaPrimitiveType, method?.parameterTypes?.single())
+    }
+
+    @Test
+    fun `compatible method rejects null for primitive parameter`() {
+        val method =
+            ReflectionCompat.findCompatibleMethod(
+                OverloadDummy::class.java,
+                "primitiveOnly",
+                arrayOf(null),
+            )
+        assertNull(method)
+    }
+
+    @Test
+    fun `compatible method accepts null for reference parameter`() {
+        val method =
+            ReflectionCompat.findCompatibleMethod(
+                OverloadDummy::class.java,
+                "nullable",
+                arrayOf(null),
+            )
+        assertNotNull(method)
+        assertEquals(String::class.java, method?.parameterTypes?.single())
+    }
+
+    @Test
+    fun `compatible method prefers nearest assignable reference type`() {
+        val method =
+            ReflectionCompat.findCompatibleMethod(
+                OverloadDummy::class.java,
+                "reference",
+                arrayOf(42),
+            )
+        assertNotNull(method)
+        assertEquals(Number::class.java, method?.parameterTypes?.single())
+    }
+
+    @Test
+    fun `compatible method supports byte short and char primitives`() {
+        val cases =
+            listOf(
+                Triple("byteValue", 1.toByte(), Byte::class.javaPrimitiveType),
+                Triple("shortValue", 1.toShort(), Short::class.javaPrimitiveType),
+                Triple("charValue", 'x', Char::class.javaPrimitiveType),
+            )
+        cases.forEach { (name, value, expectedType) ->
+            val method =
+                ReflectionCompat.findCompatibleMethod(
+                    OverloadDummy::class.java,
+                    name,
+                    arrayOf(value),
+                )
+            assertNotNull(name, method)
+            assertEquals(name, expectedType, method?.parameterTypes?.single())
+        }
     }
 }

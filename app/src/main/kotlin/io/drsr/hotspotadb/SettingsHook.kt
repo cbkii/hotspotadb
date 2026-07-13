@@ -28,30 +28,19 @@ import java.util.WeakHashMap
  *    Returns the hotspot AP interface IP instead of the station Wi-Fi IP when hotspot is active.
  *
  * 3. WifiTetherSettings.onStart() / onStop()
- *    onStart: injects a "Wireless debugging" toggle into the hotspot settings screen and
- *             registers a ContentObserver + BroadcastReceiver to keep it in sync.
- *    onStop:  unregisters the ContentObserver and BroadcastReceiver, cancels pending handler
- *             callbacks.  Prevents leaks across navigation in/out of the hotspot settings screen.
+ *    onStart injects a "Wireless debugging" toggle and registers state listeners.
+ *    onStop unregisters listeners and cancels pending handler callbacks.
  *
- * Lifecycle safety
- * - The preference injection and listener registration are separate concerns.
- * - When the fragment resumes after onStop (clean state), the preference is retrieved from the
- *   existing PreferenceScreen and listeners are re-registered.
- * - The fragmentExtras WeakHashMap holds state keyed on fragment instances; entries are eligible
- *   for GC when the fragment is destroyed.
- *
- * No XposedHelpers in modern API — all reflection uses java.lang.reflect directly.
+ * All hook symbols remain explicit. Shared reflection code only handles class lookup, field access,
+ * and deterministic overload compatibility because modern libxposed does not provide XposedHelpers.
  */
 object SettingsHook {
     private const val ADB_WIFI_ENABLED = "adb_wifi_enabled"
     private const val WIFI_AP_STATE_CHANGED_ACTION = "android.net.wifi.WIFI_AP_STATE_CHANGED"
+    private const val METHOD_CACHE_MAX_SIZE = 256
 
-    // Per-fragment extra data (observer, receiver, handler, context, runnable).
-    // Keyed weakly so GC'd fragment instances are automatically cleaned up.
     private val fragmentExtras: MutableMap<Any, MutableMap<String, Any?>> =
         Collections.synchronizedMap(WeakHashMap())
-
-    private const val METHOD_CACHE_MAX_SIZE = 256
 
     private val methodCache: MutableMap<String, Method> =
         Collections.synchronizedMap(
@@ -71,14 +60,11 @@ object SettingsHook {
         reporter.summarize()
     }
 
-    // ---- isWifiConnected ----
-
     private fun hookIsWifiConnected(
         classLoader: ClassLoader,
         module: XposedModule,
         reporter: HookReporter,
     ) {
-        // Android 16+: AdbWirelessDebuggingPreferenceController; Android 15: WirelessDebuggingPreferenceController
         val clazz =
             ReflectionCompat.findFirstClass(
                 classLoader,
@@ -110,7 +96,11 @@ object SettingsHook {
             if (result == false) {
                 val context = chain.getArg(0) as? Context ?: return@intercept result
                 val hotspotActive = HotspotHelper.isHotspotActive(context)
-                module.log(Log.INFO, TAG, "HotspotAdb: isWifiConnected original=$result hotspotActive=$hotspotActive")
+                module.log(
+                    Log.INFO,
+                    TAG,
+                    "HotspotAdb: isWifiConnected original=$result hotspotActive=$hotspotActive",
+                )
                 if (hotspotActive) {
                     module.log(Log.INFO, TAG, "HotspotAdb: isWifiConnected decision=changed(true)")
                     true
@@ -123,11 +113,14 @@ object SettingsHook {
                 result
             }
         }
-        reporter.report("Settings Wi-Fi gate", "isWifiConnected", Status.INSTALLED, "hooked ${clazz.simpleName}")
+        reporter.report(
+            "Settings Wi-Fi gate",
+            "isWifiConnected",
+            Status.INSTALLED,
+            "hooked ${clazz.simpleName}",
+        )
         module.log(Log.INFO, TAG, "HotspotAdb: hooked ${clazz.simpleName}.isWifiConnected")
     }
-
-    // ---- getIpv4Address ----
 
     private fun hookGetIpv4Address(
         classLoader: ClassLoader,
@@ -172,8 +165,6 @@ object SettingsHook {
         module.log(Log.INFO, TAG, "HotspotAdb: hooked AdbIpAddressPreferenceController.getIpv4Address")
     }
 
-    // ---- WifiTetherSettings.onStart / onStop ----
-
     private fun hookWifiTetherSettings(
         classLoader: ClassLoader,
         module: XposedModule,
@@ -191,13 +182,22 @@ object SettingsHook {
             return
         }
 
-        // Resolve both lifecycle methods before installing any hooks so we never end up
-        // with the registration path (onStart) wired but the cleanup path (onStop) absent,
-        // which would cause duplicate observer/receiver registrations on re-entry.
         val onStart =
-            ReflectionCompat.findMethod(clazz, module, "Settings tether fragment", "onStart", includeInherited = true)
+            ReflectionCompat.findMethod(
+                clazz,
+                module,
+                "Settings tether fragment",
+                "onStart",
+                includeInherited = true,
+            )
         val onStop =
-            ReflectionCompat.findMethod(clazz, module, "Settings tether fragment", "onStop", includeInherited = true)
+            ReflectionCompat.findMethod(
+                clazz,
+                module,
+                "Settings tether fragment",
+                "onStop",
+                includeInherited = true,
+            )
         if (onStart == null || onStop == null) {
             reporter.report("Settings tether fragment", "onStart/onStop", Status.MISSING, "lifecycle methods missing")
             return
@@ -214,7 +214,6 @@ object SettingsHook {
         }
         module.log(Log.INFO, TAG, "HotspotAdb: hooked WifiTetherSettings.onStart")
 
-        // onStop: unregister observers and cancel pending handler callbacks.
         module.hook(onStop).intercept { chain ->
             try {
                 cleanupFragment(chain.getThisObject()!!, module)
@@ -228,16 +227,6 @@ object SettingsHook {
         module.log(Log.INFO, TAG, "HotspotAdb: hooked WifiTetherSettings.onStop for listener cleanup")
     }
 
-    /**
-     * Inject the wireless debugging toggle into the hotspot PreferenceScreen, then register
-     * the ContentObserver and BroadcastReceiver that keep it in sync.
-     *
-     * The preference injection and listener registration are intentionally separate:
-     * - The preference is kept alive as long as the PreferenceScreen is retained.
-     * - Listeners are registered on onStart and unregistered on onStop.
-     * - After onStop cleanup, fragmentExtras is cleared; the next onStart re-registers listeners
-     *   on the already-existing preference retrieved from the screen.
-     */
     private fun injectWirelessDebuggingPref(
         fragment: Any,
         classLoader: ClassLoader,
@@ -254,25 +243,11 @@ object SettingsHook {
                 return
             }
 
-        // Step 1: get the preference, injecting it if this is the first onStart.
         val existingPref = callMethod(screen, "findPreference", "hotspot_adb_wireless_debugging")
-        val pref: Any =
-            if (existingPref != null) {
-                existingPref
-            } else {
-                createAndAddPreference(screen, context, classLoader, module) ?: return
-            }
-
-        // Step 2: register state listeners, idempotent via fragmentExtras.
-        // Always run this step; after onStop cleanup the fragmentExtras are cleared and
-        // listeners must be re-registered even though the preference object is still present.
+        val pref: Any = existingPref ?: createAndAddPreference(screen, context, classLoader, module) ?: return
         registerListenersIfNeeded(fragment, context, pref, module)
     }
 
-    /**
-     * Create the wireless debugging SwitchPreference and add it to the PreferenceScreen.
-     * Returns the created preference, or null if creation fails.
-     */
     private fun createAndAddPreference(
         screen: Any,
         context: Context,
@@ -280,8 +255,8 @@ object SettingsHook {
         module: XposedModule,
     ): Any? {
         val prefClass =
-            tryFindClass("com.android.settingslib.PrimarySwitchPreference", classLoader)
-                ?: tryFindClass("androidx.preference.SwitchPreferenceCompat", classLoader)
+            ReflectionCompat.tryFindClass("com.android.settingslib.PrimarySwitchPreference", classLoader)
+                ?: ReflectionCompat.tryFindClass("androidx.preference.SwitchPreferenceCompat", classLoader)
                 ?: run {
                     module.log(Log.WARN, TAG, "HotspotAdb: no usable Preference subclass found; toggle injection skipped")
                     return null
@@ -290,16 +265,14 @@ object SettingsHook {
 
         callMethod(pref, "setKey", "hotspot_adb_wireless_debugging")
         callMethod(pref, "setTitle", "Wireless debugging" as CharSequence)
-        // Show the EFFECTIVE state: wireless debugging is usable only when both ADB wifi and
-        // hotspot are active.  Mirrors upstream's updatePrefState logic (commit 5b6437a).
+        // Show the effective state: wireless debugging is usable only when both ADB Wi-Fi and
+        // hotspot are active. Mirrors upstream's updatePrefState logic (commit 5b6437a).
         val enabled = isAdbWifiEnabled(context) && HotspotHelper.isHotspotActive(context)
         callMethod(pref, "setChecked", enabled)
         callMethod(pref, "setSummary", getWirelessDebuggingSummary(context, enabled) as CharSequence)
 
-        // Toggle switch — enable/disable ADB Wi-Fi via Settings.Global.
-        // This is a user-initiated action: it writes directly and is not blocked by any hook.
         val changeListenerClass =
-            tryFindClass(
+            ReflectionCompat.tryFindClass(
                 "androidx.preference.Preference\$OnPreferenceChangeListener",
                 classLoader,
             ) ?: run {
@@ -319,9 +292,8 @@ object SettingsHook {
             }
         callMethod(pref, "setOnPreferenceChangeListener", changeProxy)
 
-        // Click on left/title area → open the full Wireless Debugging screen.
         val clickListenerClass =
-            tryFindClass(
+            ReflectionCompat.tryFindClass(
                 "androidx.preference.Preference\$OnPreferenceClickListener",
                 classLoader,
             )
@@ -333,25 +305,21 @@ object SettingsHook {
                 ) { _, _, _ ->
                     try {
                         val subSettingsClass =
-                            tryFindClass("com.android.settings.SubSettings", context.classLoader)
-                                ?: tryFindClass("com.android.settings.SubSettings", classLoader)
+                            ReflectionCompat.tryFindClass("com.android.settings.SubSettings", context.classLoader)
+                                ?: ReflectionCompat.tryFindClass("com.android.settings.SubSettings", classLoader)
                         if (subSettingsClass != null) {
-                            // Android 16+: AdbWirelessDebuggingFragment; Android 15: WirelessDebuggingFragment
                             val fragmentClass =
                                 (
-                                    tryFindClass(
+                                    ReflectionCompat.tryFindClass(
                                         "com.android.settings.development.AdbWirelessDebuggingFragment",
                                         classLoader,
-                                    ) ?: tryFindClass(
+                                    ) ?: ReflectionCompat.tryFindClass(
                                         "com.android.settings.development.WirelessDebuggingFragment",
                                         classLoader,
                                     )
                                 )?.name ?: "com.android.settings.development.WirelessDebuggingFragment"
-                            val intent = android.content.Intent(context, subSettingsClass)
-                            intent.putExtra(
-                                ":settings:show_fragment",
-                                fragmentClass,
-                            )
+                            val intent = Intent(context, subSettingsClass)
+                            intent.putExtra(":settings:show_fragment", fragmentClass)
                             context.startActivity(intent)
                         }
                     } catch (e: android.content.ActivityNotFoundException) {
@@ -371,20 +339,12 @@ object SettingsHook {
         return pref
     }
 
-    /**
-     * Register ContentObserver and BroadcastReceiver to keep the toggle in sync.
-     *
-     * Idempotent via fragmentExtras: does nothing if listeners are already registered.
-     * After onStop cleanup (fragmentExtras cleared), this will re-register on the next onStart.
-     */
     private fun registerListenersIfNeeded(
         fragment: Any,
         context: Context,
         pref: Any,
         module: XposedModule,
     ) {
-        // Store context unconditionally so cleanupFragment can unregister regardless of which
-        // listener block succeeds (e.g. if registerContentObserver throws before storing it).
         setFragmentExtra(fragment, "hotspot_adb_context", context)
 
         if (getFragmentExtra(fragment, "hotspot_adb_observer") == null) {
@@ -396,7 +356,6 @@ object SettingsHook {
                         selfChange: Boolean,
                         uri: Uri?,
                     ) {
-                        // Reflect effective state: both ADB wifi and hotspot must be active.
                         val on = isAdbWifiEnabled(context) && HotspotHelper.isHotspotActive(context)
                         callMethod(pref, "setChecked", on)
                         callMethod(pref, "setSummary", getWirelessDebuggingSummary(context, on) as CharSequence)
@@ -411,7 +370,6 @@ object SettingsHook {
             val handler = Handler(Looper.getMainLooper())
             val updatePref =
                 Runnable {
-                    // Reflect effective state: both ADB wifi and hotspot must be active.
                     val on = isAdbWifiEnabled(context) && HotspotHelper.isHotspotActive(context)
                     callMethod(pref, "setChecked", on)
                     callMethod(pref, "setSummary", getWirelessDebuggingSummary(context, on) as CharSequence)
@@ -422,7 +380,6 @@ object SettingsHook {
                         ctx: Context,
                         intent: Intent,
                     ) {
-                        // Update immediately and again after 1 s — hotspot IP may not be available yet.
                         updatePref.run()
                         handler.postDelayed(updatePref, 1000)
                     }
@@ -440,10 +397,6 @@ object SettingsHook {
         }
     }
 
-    /**
-     * Unregister ContentObserver and BroadcastReceiver, cancel pending handler callbacks.
-     * Called from the WifiTetherSettings.onStop hook.
-     */
     private fun cleanupFragment(
         fragment: Any,
         module: XposedModule,
@@ -481,8 +434,6 @@ object SettingsHook {
         module.log(Log.DEBUG, TAG, "HotspotAdb: cleaned up listeners for WifiTetherSettings")
     }
 
-    // ---- Helpers ----
-
     private fun isAdbWifiEnabled(context: Context): Boolean = Settings.Global.getInt(context.contentResolver, ADB_WIFI_ENABLED, 0) == 1
 
     private fun getWirelessDebuggingSummary(
@@ -501,28 +452,12 @@ object SettingsHook {
     private fun getAdbWirelessPort(): Int =
         try {
             val serviceManagerClass = Class.forName("android.os.ServiceManager")
-            val binder =
-                serviceManagerClass
-                    .getMethod("getService", String::class.java)
-                    .invoke(null, "adb")
+            val binder = serviceManagerClass.getMethod("getService", String::class.java).invoke(null, "adb")
             val stub = Class.forName("android.debug.IAdbManager\$Stub")
-            val adbService =
-                stub
-                    .getMethod("asInterface", android.os.IBinder::class.java)
-                    .invoke(null, binder)
+            val adbService = stub.getMethod("asInterface", android.os.IBinder::class.java).invoke(null, binder)
             adbService.javaClass.getMethod("getAdbWirelessPort").invoke(adbService) as Int
         } catch (_: Throwable) {
             -1
-        }
-
-    private fun tryFindClass(
-        name: String,
-        classLoader: ClassLoader,
-    ): Class<*>? =
-        try {
-            Class.forName(name, false, classLoader)
-        } catch (_: ClassNotFoundException) {
-            null
         }
 
     private fun tryGetMethod(
@@ -536,10 +471,6 @@ object SettingsHook {
             null
         }
 
-    /**
-     * Calls a method by name, choosing the best overload by matching parameter count and
-     * argument types.  Handles boxed→primitive coercion so setChecked(Boolean) works correctly.
-     */
     @Suppress("SpreadOperator")
     private fun callMethod(
         obj: Any,
@@ -551,17 +482,10 @@ object SettingsHook {
             val method =
                 synchronized(methodCache) {
                     methodCache.getOrPut(cacheKey) {
-                        obj.javaClass.methods.firstOrNull { m ->
-                            m.name == name &&
-                                m.parameterCount == args.size &&
-                                args.indices.all { i ->
-                                    val param = m.parameterTypes[i]
-                                    val arg = args[i]
-                                    arg == null || param.isInstance(arg) || isPrimitiveCompatible(param, arg)
-                                }
-                        } ?: throw NoSuchMethodException(
-                            "${obj.javaClass.name}.$name(${args.joinToString { it?.javaClass?.simpleName ?: "null" }})",
-                        )
+                        ReflectionCompat.findCompatibleMethod(obj.javaClass, name, args)
+                            ?: throw NoSuchMethodException(
+                                "${obj.javaClass.name}.$name(${args.joinToString { it?.javaClass?.simpleName ?: "null" }})",
+                            )
                     }
                 }
             method.invoke(obj, *args)
@@ -573,41 +497,6 @@ object SettingsHook {
             null
         }
 
-    private fun isPrimitiveCompatible(
-        primitive: Class<*>,
-        value: Any,
-    ): Boolean =
-        when (primitive) {
-            Boolean::class.javaPrimitiveType -> value is Boolean
-            Int::class.javaPrimitiveType -> value is Int
-            Long::class.javaPrimitiveType -> value is Long
-            Float::class.javaPrimitiveType -> value is Float
-            Double::class.javaPrimitiveType -> value is Double
-            Byte::class.javaPrimitiveType -> value is Byte
-            Short::class.javaPrimitiveType -> value is Short
-            Char::class.javaPrimitiveType -> value is Char
-            else -> false
-        }
-
-    private fun getFieldValue(
-        obj: Any,
-        name: String,
-    ): Any? {
-        var cls: Class<*>? = obj.javaClass
-        while (cls != null && cls != Any::class.java) {
-            try {
-                val field = cls.getDeclaredField(name)
-                field.isAccessible = true
-                return field.get(obj)
-            } catch (_: NoSuchFieldException) {
-                cls = cls.superclass
-            }
-        }
-        return null
-    }
-
-    // WeakHashMap-based replacement for XposedHelpers.setAdditionalInstanceField /
-    // getAdditionalInstanceField.  Keys are held weakly so GC'd fragments are cleaned up.
     private fun setFragmentExtra(
         obj: Any,
         key: String,

@@ -187,7 +187,7 @@ object FixedEndpointSettingsHook {
         module: XposedModule,
     ): Any? {
         val switchClass =
-            tryFindClass("androidx.preference.SwitchPreferenceCompat", classLoader) ?: run {
+            ReflectionCompat.tryFindClass("androidx.preference.SwitchPreferenceCompat", classLoader) ?: run {
                 module.log(Log.WARN, HotspotAdbModule.TAG, "HotspotAdb: SwitchPreferenceCompat unavailable")
                 return null
             }
@@ -196,7 +196,7 @@ object FixedEndpointSettingsHook {
         callMethod(preference, "setTitle", "Fixed hotspot endpoint" as CharSequence)
 
         val listenerClass =
-            tryFindClass("androidx.preference.Preference\$OnPreferenceChangeListener", classLoader) ?: return null
+            ReflectionCompat.tryFindClass("androidx.preference.Preference\$OnPreferenceChangeListener", classLoader) ?: return null
         val listener =
             Proxy.newProxyInstance(classLoader, arrayOf(listenerClass)) { _, _, args ->
                 val enabled = args?.getOrNull(1) as? Boolean ?: false
@@ -313,44 +313,30 @@ object FixedEndpointSettingsHook {
             null
         }
 
-    private fun tryFindClass(
-        name: String,
-        classLoader: ClassLoader,
-    ): Class<*>? =
-        try {
-            Class.forName(name, false, classLoader)
-        } catch (_: ClassNotFoundException) {
-            null
-        }
-
+    @Suppress("SpreadOperator")
     private fun callMethod(
         target: Any,
         name: String,
         vararg args: Any?,
-    ): Any? {
-        val method =
-            target.javaClass.methods.firstOrNull { candidate ->
-                candidate.name == name &&
-                    candidate.parameterCount == args.size &&
-                    args.indices.all { index -> isCompatible(candidate.parameterTypes[index], args[index]) }
-            } ?: return null
-        method.isAccessible = true
-        return method.invoke(target, *args)
-    }
-
-    private fun isCompatible(
-        parameter: Class<*>,
-        argument: Any?,
-    ): Boolean {
-        if (argument == null) return !parameter.isPrimitive
-        if (parameter.isInstance(argument)) return true
-        return when (parameter) {
-            Boolean::class.javaPrimitiveType -> argument is Boolean
-            Int::class.javaPrimitiveType -> argument is Int
-            Long::class.javaPrimitiveType -> argument is Long
-            Float::class.javaPrimitiveType -> argument is Float
-            Double::class.javaPrimitiveType -> argument is Double
-            else -> false
+    ): Any? =
+        try {
+            val method =
+                ReflectionCompat.findCompatibleMethod(target.javaClass, name, args) ?: run {
+                    val argumentTypes = args.joinToString { it?.javaClass?.name ?: "null" }
+                    Log.w(
+                        HotspotAdbModule.TAG,
+                        "HotspotAdb: fixed endpoint callMethod no compatible overload " +
+                            "target=${target.javaClass.name} method=$name args=[$argumentTypes]",
+                    )
+                    return null
+                }
+            method.isAccessible = true
+            method.invoke(target, *args)
+        } catch (e: ReflectiveOperationException) {
+            Log.w(HotspotAdbModule.TAG, "HotspotAdb: fixed endpoint callMethod($name) failed: $e")
+            null
+        } catch (e: IllegalArgumentException) {
+            Log.w(HotspotAdbModule.TAG, "HotspotAdb: fixed endpoint callMethod($name) failed: $e")
+            null
         }
-    }
 }
