@@ -170,15 +170,18 @@ object ReflectionCompat {
                     .thenBy { it.method.toGenericString() },
             ).firstOrNull()
             ?.method
+            ?.also { method -> runCatching { method.isAccessible = true } }
 
     private fun compatibleMethodSurface(clazz: Class<*>): Sequence<Method> =
         sequence {
             var current: Class<*>? = clazz
             while (current != null && current != Any::class.java) {
-                yieldAll(current.declaredMethods.asSequence())
+                val declaredMethods = runCatching { current.declaredMethods }.getOrDefault(emptyArray())
+                yieldAll(declaredMethods.asSequence())
                 current = current.superclass
             }
-            yieldAll(clazz.methods.asSequence())
+            val publicMethods = runCatching { clazz.methods }.getOrDefault(emptyArray())
+            yieldAll(publicMethods.asSequence())
         }.distinctBy { method ->
             buildString {
                 append(method.declaringClass.name)
