@@ -1,9 +1,9 @@
 name: PR32 format evidence
 
 on:
-  push:
+  pull_request:
     branches:
-      - fix/pr31-reflection-hotspot-hardening
+      - main
     paths:
       - "app/src/**/*.kt"
       - ".github/workflows/pr32-format-evidence.yml"
