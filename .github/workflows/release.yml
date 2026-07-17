@@ -171,7 +171,7 @@ jobs:
           packages: 'build-tools;35.0.0 platforms;android-36 platform-tools cmdline-tools;latest'
 
       - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
+        uses: gradle/actions/setup-gradle@v6
 
       - name: Build signed release APK
         shell: bash
